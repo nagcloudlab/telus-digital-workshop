@@ -16,6 +16,7 @@ COPY src ./src
 RUN mvn clean package -DskipTests -B && \
     mv target/*.jar target/app.jar
 
+    
 # Stage 2: Runtime stage
 FROM eclipse-temurin:17-jre-alpine
 

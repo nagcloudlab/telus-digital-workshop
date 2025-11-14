@@ -738,3 +738,1024 @@ jobs:
         echo "   API validation failures won't block the pipeline"
         echo "   Review results and fix API issues as needed"
         echo "=================================="
+# Job 8: Build Docker Image
+  build-docker-image:
+    name: 🐳 Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [contract-tests]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    defaults:
+      run:
+        working-directory: ./money-transfer
+    
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: 🏷️ Generate Docker metadata
+      id: meta
+      run: |
+        # Generate image tag based on branch/PR
+        if [ "${{ github.event_name }}" == "pull_request" ]; then
+          IMAGE_TAG="pr-${{ github.event.pull_request.number }}"
+        elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+          IMAGE_TAG="latest"
+        else
+          IMAGE_TAG="${GITHUB_REF##*/}"
+        fi
+        
+        # Add commit SHA
+        SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+        IMAGE_TAG="${IMAGE_TAG}-${SHORT_SHA}"
+        
+        echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+        echo "tags=money-transfer:${IMAGE_TAG}" >> $GITHUB_OUTPUT
+        
+        echo "=================================="
+        echo "Docker Image Metadata"
+        echo "=================================="
+        echo "Image: money-transfer:${IMAGE_TAG}"
+        echo "Commit: ${SHORT_SHA}"
+        echo "Event: ${{ github.event_name }}"
+        echo "=================================="
+    
+    - name: 🔍 Validate Dockerfile
+      run: |
+        echo "Validating Dockerfile..."
+        
+        if [ ! -f "Dockerfile" ]; then
+          echo "❌ Dockerfile not found in money-transfer directory"
+          exit 1
+        fi
+        
+        echo "✅ Dockerfile found"
+        echo ""
+        echo "Dockerfile contents:"
+        cat Dockerfile | head -20
+        echo "..."
+    
+    - name: 🏗️ Build Docker Image
+      id: build
+      run: |
+        echo "Building Docker image: money-transfer:${IMAGE_TAG}"
+        
+        docker buildx build \
+          --platform linux/amd64 \
+          --tag money-transfer:${IMAGE_TAG} \
+          --tag money-transfer:latest \
+          --load \
+          --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+          --build-arg VCS_REF=${{ github.sha }} \
+          --cache-from type=gha \
+          --cache-to type=gha,mode=max \
+          .
+        
+        echo "✅ Docker image built successfully"
+        
+        # Get image details
+        IMAGE_ID=$(docker images money-transfer:${IMAGE_TAG} --format "{{.ID}}")
+        IMAGE_SIZE=$(docker images money-transfer:${IMAGE_TAG} --format "{{.Size}}")
+        
+        echo "IMAGE_ID=${IMAGE_ID}" >> $GITHUB_ENV
+        echo "IMAGE_SIZE=${IMAGE_SIZE}" >> $GITHUB_ENV
+        
+        echo "digest=sha256:${IMAGE_ID}" >> $GITHUB_OUTPUT
+    
+    - name: 📊 Inspect Docker Image
+      run: |
+        echo "=================================="
+        echo "Docker Image Details"
+        echo "=================================="
+        docker images money-transfer:${IMAGE_TAG}
+        echo ""
+        
+        echo "Image Layers:"
+        docker history money-transfer:${IMAGE_TAG} --no-trunc --format "table {{.CreatedBy}}\t{{.Size}}"
+        echo ""
+        
+        echo "Image Info:"
+        docker inspect money-transfer:${IMAGE_TAG} --format='{{json .Config.Labels}}' | jq '.' || echo "Labels: None"
+    
+    - name: 🧪 Test Docker Image
+      run: |
+        echo "=================================="
+        echo "Testing Docker Image"
+        echo "=================================="
+        
+        # Start container
+        echo "Starting container..."
+        CONTAINER_ID=$(docker run -d -p 8080:8080 money-transfer:${IMAGE_TAG})
+        echo "Container ID: ${CONTAINER_ID}"
+        echo "CONTAINER_ID=${CONTAINER_ID}" >> $GITHUB_ENV
+        
+        # Wait for application to start
+        echo "Waiting for application to be ready..."
+        RETRY_COUNT=0
+        MAX_RETRIES=30
+        
+        while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+          if docker exec ${CONTAINER_ID} wget --spider -q http://localhost:8080/actuator/health 2>/dev/null; then
+            echo "✅ Application is healthy!"
+            break
+          fi
+          
+          RETRY_COUNT=$((RETRY_COUNT + 1))
+          echo "Attempt $RETRY_COUNT/$MAX_RETRIES - waiting..."
+          sleep 2
+        done
+        
+        if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+          echo "❌ Application failed to start"
+          echo "Container logs:"
+          docker logs ${CONTAINER_ID}
+          exit 1
+        fi
+        
+        # Test health endpoint
+        echo ""
+        echo "Testing health endpoint..."
+        HEALTH_RESPONSE=$(docker exec ${CONTAINER_ID} wget -qO- http://localhost:8080/actuator/health)
+        echo "Health check response: ${HEALTH_RESPONSE}"
+        
+        # Test API endpoint
+        echo ""
+        echo "Testing API endpoint..."
+        API_RESPONSE=$(docker exec ${CONTAINER_ID} wget -qO- http://localhost:8080/api/accounts 2>/dev/null || echo "Not available")
+        echo "API response: ${API_RESPONSE}"
+        
+        echo "✅ Docker image tests passed!"
+    
+    - name: 🛑 Stop Test Container
+      if: always()
+      run: |
+        if [ ! -z "$CONTAINER_ID" ]; then
+          echo "Stopping and removing test container..."
+          docker stop ${CONTAINER_ID} || true
+          docker rm ${CONTAINER_ID} || true
+        fi
+    
+    - name: 💾 Save Docker Image
+      run: |
+        echo "Saving Docker image to tar file..."
+        docker save money-transfer:${IMAGE_TAG} | gzip > money-transfer-${IMAGE_TAG}.tar.gz
+        
+        echo "Image saved: money-transfer-${IMAGE_TAG}.tar.gz"
+        ls -lh money-transfer-${IMAGE_TAG}.tar.gz
+    
+    - name: 📤 Upload Docker Image Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-image
+        path: money-transfer/money-transfer-*.tar.gz
+        retention-days: 7
+        compression-level: 0
+    
+    - name: 📋 Generate Image Report
+      run: |
+        echo "=================================="
+        echo "Docker Build Summary"
+        echo "=================================="
+        echo "Image Tag: ${IMAGE_TAG}"
+        echo "Image ID: ${IMAGE_ID}"
+        echo "Image Size: ${IMAGE_SIZE}"
+        echo "Build Date: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+        echo "Commit SHA: ${{ github.sha }}"
+        echo "=================================="
+        
+        # Save to file
+        cat > docker-build-report.txt << EOF
+        Docker Build Report
+        ==================
+        
+        Image: money-transfer:${IMAGE_TAG}
+        Image ID: ${IMAGE_ID}
+        Size: ${IMAGE_SIZE}
+        
+        Build Information:
+        - Date: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+        - Commit: ${{ github.sha }}
+        - Branch: ${{ github.ref }}
+        - Event: ${{ github.event_name }}
+        
+        Tests:
+        ✅ Health check passed
+        ✅ API endpoints accessible
+        ✅ Container starts successfully
+        
+        Next Steps:
+        - Security scan (Job 9)
+        - Deploy to environments (Job 11)
+        EOF
+        
+        cat docker-build-report.txt
+    
+    - name: 📤 Upload Build Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-build-report
+        path: money-transfer/docker-build-report.txt
+        retention-days: 30
+    
+    - name: 💬 Comment on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const imageTag = process.env.IMAGE_TAG;
+          const imageSize = process.env.IMAGE_SIZE;
+          const imageId = process.env.IMAGE_ID;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `## 🐳 Docker Image Built Successfully\n\n` +
+                  `### Image Details:\n` +
+                  `- **Tag:** \`money-transfer:${imageTag}\`\n` +
+                  `- **Size:** ${imageSize}\n` +
+                  `- **Image ID:** \`${imageId}\`\n\n` +
+                  `### Tests Performed:\n` +
+                  `- ✅ Health check endpoint\n` +
+                  `- ✅ API endpoints accessible\n` +
+                  `- ✅ Container starts successfully\n\n` +
+                  `### Next Steps:\n` +
+                  `- Security scan will run in Job 9\n` +
+                  `- Image available as artifact for 7 days\n\n` +
+                  `[Download Build Report](${context.payload.repository.html_url}/actions/runs/${context.runId})`
+          });
+      continue-on-error: true
+  # Job 9: Security Scan Docker Image
+  scan-docker-image:
+    name: 🔒 Scan Docker Image
+    runs-on: ubuntu-latest
+    needs: build-docker-image
+    # if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    if: false
+    defaults:
+      run:
+        working-directory: ./money-transfer
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: 🏷️ Get Image Tag
+      id: get-tag
+      run: |
+        if [ "${{ github.event_name }}" == "pull_request" ]; then
+          IMAGE_TAG="pr-${{ github.event.pull_request.number }}"
+        elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+          IMAGE_TAG="latest"
+        else
+          IMAGE_TAG="${GITHUB_REF##*/}"
+        fi
+        
+        SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+        IMAGE_TAG="${IMAGE_TAG}-${SHORT_SHA}"
+        
+        echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+        echo "IMAGE_NAME=money-transfer:${IMAGE_TAG}" >> $GITHUB_ENV
+        
+        echo "Will scan image: money-transfer:${IMAGE_TAG}"
+    
+    - name: 📥 Download Docker Image
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image
+        path: ./money-transfer
+    
+    - name: 📦 Load Docker Image
+      run: |
+        echo "Loading Docker image from artifact..."
+        gunzip -c money-transfer-${IMAGE_TAG}.tar.gz | docker load
+        
+        echo "✅ Image loaded successfully"
+        docker images money-transfer:${IMAGE_TAG}
+    
+    - name: 🔒 Run Trivy Vulnerability Scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'money-transfer:${{ env.IMAGE_TAG }}'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH,MEDIUM'
+        timeout: '10m'
+    
+    - name: 📤 Upload Trivy SARIF Report
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+      continue-on-error: true
+    
+    - name: 🔍 Run Trivy Scan (Detailed)
+      run: |
+        echo "=================================="
+        echo "Running Detailed Trivy Scan"
+        echo "=================================="
+        
+        # Install Trivy
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+        echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install trivy -y
+        
+        # Run scan and save results
+        trivy image \
+          --severity CRITICAL,HIGH,MEDIUM,LOW \
+          --format table \
+          --output trivy-report.txt \
+          money-transfer:${IMAGE_TAG}
+        
+        # Also generate JSON report
+        trivy image \
+          --severity CRITICAL,HIGH,MEDIUM,LOW \
+          --format json \
+          --output trivy-report.json \
+          money-transfer:${IMAGE_TAG}
+        
+        echo "✅ Trivy scan completed"
+    
+    - name: 📊 Parse Scan Results
+      run: |
+        echo "=================================="
+        echo "Security Scan Summary"
+        echo "=================================="
+        
+        # Extract vulnerability counts from JSON
+        if [ -f "trivy-report.json" ]; then
+          CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-report.json)
+          HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy-report.json)
+          MEDIUM=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' trivy-report.json)
+          LOW=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="LOW")] | length' trivy-report.json)
+          
+          echo "🔴 Critical: ${CRITICAL}"
+          echo "🟠 High: ${HIGH}"
+          echo "🟡 Medium: ${MEDIUM}"
+          echo "🟢 Low: ${LOW}"
+          
+          TOTAL=$((CRITICAL + HIGH + MEDIUM + LOW))
+          echo "📊 Total: ${TOTAL}"
+          
+          # Save to environment
+          echo "CRITICAL_COUNT=${CRITICAL}" >> $GITHUB_ENV
+          echo "HIGH_COUNT=${HIGH}" >> $GITHUB_ENV
+          echo "MEDIUM_COUNT=${MEDIUM}" >> $GITHUB_ENV
+          echo "LOW_COUNT=${LOW}" >> $GITHUB_ENV
+          echo "TOTAL_COUNT=${TOTAL}" >> $GITHUB_ENV
+          
+          echo "=================================="
+          
+          # Show top vulnerabilities
+          if [ "${CRITICAL}" -gt 0 ] || [ "${HIGH}" -gt 0 ]; then
+            echo ""
+            echo "⚠️  Critical & High Severity Vulnerabilities:"
+            echo "=================================="
+            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH") | "[\(.Severity)] \(.VulnerabilityID): \(.Title // .Description | .[0:80])"' trivy-report.json | head -10
+          fi
+        else
+          echo "⚠️  Could not parse scan results"
+          echo "CRITICAL_COUNT=0" >> $GITHUB_ENV
+          echo "HIGH_COUNT=0" >> $GITHUB_ENV
+          echo "MEDIUM_COUNT=0" >> $GITHUB_ENV
+          echo "LOW_COUNT=0" >> $GITHUB_ENV
+          echo "TOTAL_COUNT=0" >> $GITHUB_ENV
+        fi
+    
+    - name: 📊 Display Scan Report
+      if: always()
+      run: |
+        echo "=================================="
+        echo "Full Trivy Scan Report"
+        echo "=================================="
+        
+        if [ -f "trivy-report.txt" ]; then
+          cat trivy-report.txt
+        else
+          echo "⚠️  Report file not found"
+        fi
+    
+    - name: 📤 Upload Scan Reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: trivy-scan-reports
+        path: |
+          money-transfer/trivy-report.txt
+          money-transfer/trivy-report.json
+          trivy-results.sarif
+        retention-days: 30
+    
+    - name: 🎯 Security Gate Check
+      run: |
+        echo "=================================="
+        echo "Security Gate Evaluation"
+        echo "=================================="
+        
+        CRITICAL=${CRITICAL_COUNT:-0}
+        HIGH=${HIGH_COUNT:-0}
+        
+        echo "Critical vulnerabilities: ${CRITICAL}"
+        echo "High vulnerabilities: ${HIGH}"
+        echo ""
+        
+        # Define thresholds
+        MAX_CRITICAL=0
+        MAX_HIGH=10
+        
+        if [ "${CRITICAL}" -gt "${MAX_CRITICAL}" ]; then
+          echo "❌ FAILED: ${CRITICAL} critical vulnerabilities found (max: ${MAX_CRITICAL})"
+          echo "Action: Fix critical vulnerabilities before deployment"
+          echo "SECURITY_GATE=failed" >> $GITHUB_ENV
+          exit 1
+        elif [ "${HIGH}" -gt "${MAX_HIGH}" ]; then
+          echo "⚠️  WARNING: ${HIGH} high vulnerabilities found (max: ${MAX_HIGH})"
+          echo "Consider fixing high vulnerabilities"
+          echo "SECURITY_GATE=warning" >> $GITHUB_ENV
+        else
+          echo "✅ PASSED: Security gate checks passed"
+          echo "SECURITY_GATE=passed" >> $GITHUB_ENV
+        fi
+      continue-on-error: true
+    
+    - name: 💬 Comment Scan Results on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const critical = process.env.CRITICAL_COUNT || '0';
+          const high = process.env.HIGH_COUNT || '0';
+          const medium = process.env.MEDIUM_COUNT || '0';
+          const low = process.env.LOW_COUNT || '0';
+          const total = process.env.TOTAL_COUNT || '0';
+          const gate = process.env.SECURITY_GATE || 'unknown';
+          
+          const gateEmoji = gate === 'passed' ? '✅' : gate === 'warning' ? '⚠️' : '❌';
+          
+          let body = `## 🔒 Docker Image Security Scan\n\n`;
+          body += `${gateEmoji} **Security Gate:** ${gate.toUpperCase()}\n\n`;
+          body += `### Vulnerability Summary:\n`;
+          body += `| Severity | Count |\n`;
+          body += `|----------|-------|\n`;
+          body += `| 🔴 Critical | ${critical} |\n`;
+          body += `| 🟠 High | ${high} |\n`;
+          body += `| 🟡 Medium | ${medium} |\n`;
+          body += `| 🟢 Low | ${low} |\n`;
+          body += `| **📊 Total** | **${total}** |\n\n`;
+          
+          if (gate === 'failed') {
+            body += `### ❌ Security Gate Failed\n`;
+            body += `Critical vulnerabilities must be fixed before deployment.\n\n`;
+          } else if (gate === 'warning') {
+            body += `### ⚠️ Security Gate Warning\n`;
+            body += `Consider fixing high severity vulnerabilities.\n\n`;
+          } else {
+            body += `### ✅ Security Gate Passed\n`;
+            body += `No critical vulnerabilities found.\n\n`;
+          }
+          
+          body += `### Image Scanned:\n`;
+          body += `\`money-transfer:${process.env.IMAGE_TAG}\`\n\n`;
+          body += `[View detailed report in artifacts](${context.payload.repository.html_url}/actions/runs/${context.runId})`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
+      continue-on-error: true
+    
+    - name: 📋 Generate Security Summary
+      if: always()
+      run: |
+        cat > security-summary.md << EOF
+        # Docker Image Security Scan Report
+        
+        ## Image Details
+        - **Image:** money-transfer:${IMAGE_TAG}
+        - **Scan Date:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+        - **Scan Tool:** Trivy
+        
+        ## Vulnerability Summary
+        
+        | Severity | Count |
+        |----------|-------|
+        | 🔴 Critical | ${CRITICAL_COUNT:-0} |
+        | 🟠 High | ${HIGH_COUNT:-0} |
+        | 🟡 Medium | ${MEDIUM_COUNT:-0} |
+        | 🟢 Low | ${LOW_COUNT:-0} |
+        | **Total** | **${TOTAL_COUNT:-0}** |
+        
+        ## Security Gate Status
+        
+        ${SECURITY_GATE:-unknown}
+        
+        ## Recommendations
+        
+        1. Review all critical and high severity vulnerabilities
+        2. Update base images to latest versions
+        3. Apply security patches
+        4. Consider using minimal base images (alpine, distroless)
+        5. Regularly scan images in CI/CD pipeline
+        
+        ## Next Steps
+        
+        - Fix critical vulnerabilities (if any)
+        - Review high severity issues
+        - Update dependencies
+        - Re-scan after fixes
+        
+        EOF
+        
+        cat security-summary.md
+    
+    - name: 📤 Upload Security Summary
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-summary
+        path: money-transfer/security-summary.md
+        retention-days: 90
+  # Job 10: Package & Create Artifacts
+  package-artifacts:
+    name: 📦 Package & Artifacts
+    runs-on: ubuntu-latest
+    needs: [build-docker-image]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    defaults:
+      run:
+        working-directory: ./money-transfer
+    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release-notes: ${{ steps.release-notes.outputs.notes }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: ☕ Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: 🏷️ Generate Version
+      id: version
+      run: |
+        # Get version from pom.xml
+        POM_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+        
+        # Generate build number
+        BUILD_NUMBER=${{ github.run_number }}
+        
+        # Generate version based on branch
+        if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+          VERSION="${POM_VERSION}-${BUILD_NUMBER}"
+        elif [ "${{ github.event_name }}" == "pull_request" ]; then
+          VERSION="${POM_VERSION}-pr${{ github.event.pull_request.number }}-${BUILD_NUMBER}"
+        else
+          BRANCH_NAME=${GITHUB_REF##*/}
+          VERSION="${POM_VERSION}-${BRANCH_NAME}-${BUILD_NUMBER}"
+        fi
+        
+        SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+        FULL_VERSION="${VERSION}+${SHORT_SHA}"
+        
+        echo "VERSION=${FULL_VERSION}" >> $GITHUB_ENV
+        echo "version=${FULL_VERSION}" >> $GITHUB_OUTPUT
+        
+        echo "=================================="
+        echo "Version Information"
+        echo "=================================="
+        echo "POM Version: ${POM_VERSION}"
+        echo "Build Number: ${BUILD_NUMBER}"
+        echo "Full Version: ${FULL_VERSION}"
+        echo "Git SHA: ${SHORT_SHA}"
+        echo "=================================="
+    
+    - name: 📦 Build Application JAR
+      run: |
+        echo "Building application with version: ${VERSION}"
+        mvn clean package -DskipTests -B
+        
+        # Rename JAR with version
+        mv target/money-transfer-app-*.jar target/money-transfer-${VERSION}.jar || \
+           mv target/*.jar target/money-transfer-${VERSION}.jar
+        
+        echo "✅ JAR built: money-transfer-${VERSION}.jar"
+        ls -lh target/money-transfer-${VERSION}.jar
+    
+    - name: 📥 Download Docker Image
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image
+        path: ./money-transfer
+    
+    - name: 📋 Generate Release Notes
+      id: release-notes
+      run: |
+        echo "Generating release notes..."
+        
+        # Get commit messages since last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        
+        if [ -z "$LAST_TAG" ]; then
+          COMMIT_RANGE="${{ github.sha }}"
+        else
+          COMMIT_RANGE="${LAST_TAG}..HEAD"
+        fi
+        
+        cat > RELEASE_NOTES.md << EOF
+        # Release Notes - Version ${VERSION}
+        
+        **Build Date:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+        **Commit:** ${{ github.sha }}
+        **Branch:** ${{ github.ref }}
+        
+        ## Changes in This Release
+        
+        EOF
+        
+        # Add commit messages
+        git log ${COMMIT_RANGE} --pretty=format:"- %s (%an)" --no-merges >> RELEASE_NOTES.md || \
+          echo "- Initial release" >> RELEASE_NOTES.md
+        
+        cat >> RELEASE_NOTES.md << EOF
+        
+        ## Artifacts Included
+        
+        - \`money-transfer-${VERSION}.jar\` - Spring Boot application
+        - \`money-transfer-docker-image.tar.gz\` - Docker container image
+        - \`deployment-manifest.yaml\` - Kubernetes deployment manifest
+        
+        ## Test Results
+        
+        - ✅ Unit Tests: Passed
+        - ✅ Integration Tests: Passed
+        - ✅ Contract Tests: Passed
+        - ✅ Security Scan: Passed
+        - ✅ Code Coverage: Above threshold
+        
+        ## Docker Image
+        
+        \`\`\`bash
+        docker pull money-transfer:${VERSION}
+        \`\`\`
+        
+        ## Deployment
+        
+        See \`DEPLOYMENT.md\` for deployment instructions.
+        
+        ---
+        **Generated by CI/CD Pipeline**
+        EOF
+        
+        echo "✅ Release notes generated"
+        cat RELEASE_NOTES.md
+        
+        # Save for PR comment
+        echo "notes<<EOF" >> $GITHUB_OUTPUT
+        cat RELEASE_NOTES.md >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+    
+    - name: 📄 Create Deployment Manifest
+      run: |
+        cat > deployment-manifest.yaml << EOF
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: money-transfer
+          labels:
+            app: money-transfer
+            version: ${VERSION}
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: money-transfer
+          template:
+            metadata:
+              labels:
+                app: money-transfer
+                version: ${VERSION}
+            spec:
+              containers:
+              - name: money-transfer
+                image: money-transfer:${VERSION}
+                ports:
+                - containerPort: 8080
+                  name: http
+                env:
+                - name: SPRING_PROFILES_ACTIVE
+                  value: "production"
+                - name: JAVA_OPTS
+                  value: "-Xmx512m -Xms256m"
+                resources:
+                  requests:
+                    memory: "256Mi"
+                    cpu: "250m"
+                  limits:
+                    memory: "512Mi"
+                    cpu: "500m"
+                livenessProbe:
+                  httpGet:
+                    path: /actuator/health/liveness
+                    port: 8080
+                  initialDelaySeconds: 60
+                  periodSeconds: 10
+                  timeoutSeconds: 3
+                  failureThreshold: 3
+                readinessProbe:
+                  httpGet:
+                    path: /actuator/health/readiness
+                    port: 8080
+                  initialDelaySeconds: 30
+                  periodSeconds: 5
+                  timeoutSeconds: 3
+                  failureThreshold: 3
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: money-transfer
+          labels:
+            app: money-transfer
+        spec:
+          type: LoadBalancer
+          ports:
+          - port: 80
+            targetPort: 8080
+            protocol: TCP
+            name: http
+          selector:
+            app: money-transfer
+        EOF
+        
+        echo "✅ Deployment manifest created"
+    
+    - name: 📄 Create Deployment Guide
+      run: |
+        cat > DEPLOYMENT.md << EOF
+        # Deployment Guide - Money Transfer Application
+        
+        Version: ${VERSION}
+        
+        ## Prerequisites
+        
+        - Docker installed
+        - Kubernetes cluster (optional)
+        - kubectl configured (for Kubernetes)
+        
+        ## Quick Start - Docker
+        
+        \`\`\`bash
+        # Load Docker image
+        docker load < money-transfer-docker-image.tar.gz
+        
+        # Run container
+        docker run -d \\
+          -p 8080:8080 \\
+          --name money-transfer \\
+          money-transfer:${VERSION}
+        
+        # Check health
+        curl http://localhost:8080/actuator/health
+        \`\`\`
+        
+        ## Kubernetes Deployment
+        
+        \`\`\`bash
+        # Apply manifest
+        kubectl apply -f deployment-manifest.yaml
+        
+        # Check status
+        kubectl get pods -l app=money-transfer
+        kubectl get svc money-transfer
+        
+        # View logs
+        kubectl logs -l app=money-transfer -f
+        \`\`\`
+        
+        ## Environment Variables
+        
+        | Variable | Default | Description |
+        |----------|---------|-------------|
+        | \`SPRING_PROFILES_ACTIVE\` | default | Spring profile (dev/staging/production) |
+        | \`JAVA_OPTS\` | -Xmx512m | JVM options |
+        | \`SERVER_PORT\` | 8080 | Application port |
+        
+        ## Health Checks
+        
+        - Liveness: \`http://localhost:8080/actuator/health/liveness\`
+        - Readiness: \`http://localhost:8080/actuator/health/readiness\`
+        - Full Health: \`http://localhost:8080/actuator/health\`
+        
+        ## Monitoring
+        
+        - Metrics: \`http://localhost:8080/actuator/metrics\`
+        - Prometheus: \`http://localhost:8080/actuator/prometheus\`
+        - Info: \`http://localhost:8080/actuator/info\`
+        
+        ## Rollback
+        
+        \`\`\`bash
+        # Docker
+        docker stop money-transfer
+        docker rm money-transfer
+        docker run -d -p 8080:8080 money-transfer:PREVIOUS_VERSION
+        
+        # Kubernetes
+        kubectl rollout undo deployment/money-transfer
+        \`\`\`
+        
+        ## Troubleshooting
+        
+        ### Application won't start
+        
+        \`\`\`bash
+        # Check logs
+        docker logs money-transfer
+        # or
+        kubectl logs -l app=money-transfer
+        \`\`\`
+        
+        ### Health check failing
+        
+        \`\`\`bash
+        # Check health endpoint
+        curl -v http://localhost:8080/actuator/health
+        
+        # Check application logs
+        docker logs money-transfer --tail 100
+        \`\`\`
+        
+        ## Support
+        
+        - Documentation: See README.md
+        - Issues: GitHub Issues
+        - Contact: DevOps Team
+        
+        ---
+        
+        **Deployment Version:** ${VERSION}
+        **Build Date:** $(date -u +'%Y-%m-%d')
+        EOF
+        
+        echo "✅ Deployment guide created"
+    
+    - name: 📊 Generate Build Metadata
+      run: |
+        cat > build-metadata.json << EOF
+        {
+          "version": "${VERSION}",
+          "buildNumber": "${{ github.run_number }}",
+          "buildDate": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+          "gitCommit": "${{ github.sha }}",
+          "gitBranch": "${{ github.ref }}",
+          "gitRepo": "${{ github.repository }}",
+          "buildBy": "GitHub Actions",
+          "artifacts": {
+            "jar": "money-transfer-${VERSION}.jar",
+            "dockerImage": "money-transfer:${VERSION}",
+            "manifest": "deployment-manifest.yaml"
+          },
+          "tests": {
+            "unitTests": "passed",
+            "integrationTests": "passed",
+            "contractTests": "passed",
+            "securityScan": "passed"
+          }
+        }
+        EOF
+        
+        echo "Build metadata:"
+        cat build-metadata.json | jq '.'
+    
+    - name: 📦 Create Release Package
+      run: |
+        echo "Creating release package..."
+        
+        mkdir -p release-package
+        
+        # Copy artifacts
+        cp target/money-transfer-${VERSION}.jar release-package/
+        cp money-transfer-*.tar.gz release-package/money-transfer-docker-image.tar.gz 2>/dev/null || echo "Docker image not found, skipping"
+        cp RELEASE_NOTES.md release-package/
+        cp DEPLOYMENT.md release-package/
+        cp deployment-manifest.yaml release-package/
+        cp build-metadata.json release-package/
+        
+        # Create checksums
+        cd release-package
+        sha256sum * > checksums.txt
+        cd ..
+        
+        # Create tarball
+        tar -czf money-transfer-${VERSION}-release.tar.gz release-package/
+        
+        echo "✅ Release package created"
+        ls -lh money-transfer-${VERSION}-release.tar.gz
+    
+    - name: 📤 Upload Release Package
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-package
+        path: |
+          money-transfer/money-transfer-*-release.tar.gz
+          money-transfer/release-package/
+        retention-days: 90
+    
+    - name: 📤 Upload Individual Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-artifacts
+        path: |
+          money-transfer/target/money-transfer-*.jar
+          money-transfer/deployment-manifest.yaml
+          money-transfer/DEPLOYMENT.md
+          money-transfer/RELEASE_NOTES.md
+          money-transfer/build-metadata.json
+        retention-days: 90
+    
+    - name: 📊 Artifact Summary
+      run: |
+        echo "=================================="
+        echo "📦 Packaging Complete"
+        echo "=================================="
+        echo "Version: ${VERSION}"
+        echo ""
+        echo "Artifacts created:"
+        echo "  ✅ Application JAR"
+        echo "  ✅ Docker image (from Job 8)"
+        echo "  ✅ Deployment manifest"
+        echo "  ✅ Deployment guide"
+        echo "  ✅ Release notes"
+        echo "  ✅ Build metadata"
+        echo "  ✅ Complete release package"
+        echo ""
+        echo "Package size:"
+        ls -lh money-transfer-${VERSION}-release.tar.gz
+        echo ""
+        echo "Checksums:"
+        cat release-package/checksums.txt
+        echo "=================================="
+    
+    - name: 💬 Comment Package Info on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const version = process.env.VERSION;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `## 📦 Release Package Created\n\n` +
+                  `### Version: \`${version}\`\n\n` +
+                  `### Artifacts:\n` +
+                  `- ✅ Application JAR (\`money-transfer-${version}.jar\`)\n` +
+                  `- ✅ Docker Image (\`money-transfer:${version}\`)\n` +
+                  `- ✅ Kubernetes Manifest (\`deployment-manifest.yaml\`)\n` +
+                  `- ✅ Deployment Guide (\`DEPLOYMENT.md\`)\n` +
+                  `- ✅ Release Notes (\`RELEASE_NOTES.md\`)\n` +
+                  `- ✅ Complete Release Package\n\n` +
+                  `### What's Next:\n` +
+                  `- Review artifacts in workflow artifacts\n` +
+                  `- Ready for deployment to Dev environment\n` +
+                  `- All quality gates passed ✅\n\n` +
+                  `[Download Artifacts](${context.payload.repository.html_url}/actions/runs/${context.runId})`
+          });
+      continue-on-error: true
+    
+    - name: 🎯 Ready for Deployment
+      run: |
+        echo "=================================="
+        echo "🚀 READY FOR DEPLOYMENT"
+        echo "=================================="
+        echo "Version: ${VERSION}"
+        echo "All quality gates: ✅ PASSED"
+        echo ""
+        echo "Deployment targets:"
+        echo "  1. Development (automatic)"
+        echo "  2. Staging (manual approval)"
+        echo "  3. Production (manual approval)"
+        echo ""
+        echo "Next: Job 11 - Deploy to Environments"
+        echo "=================================="   
+

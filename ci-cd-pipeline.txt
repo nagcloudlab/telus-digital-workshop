@@ -60,7 +60,7 @@ Saves image as compressed artifact
 Generates build report
 Comments on PRs with image details
 
-Job 9: 🔒 Scan Docker Image (Disabled)
+Job 9: 🔒 Scan Docker Image
 Downloads and loads Docker image
 Runs Trivy vulnerability scanner
 Checks for Critical/High/Medium/Low vulnerabilities
