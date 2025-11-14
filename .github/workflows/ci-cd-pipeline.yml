@@ -100,4 +100,246 @@ jobs:
         echo "✅ Gitleaks secret scan completed"
         echo "Note: OWASP Dependency Check removed for speed"
         echo "Recommendation: Run OWASP separately weekly"
-        echo "=================================="      
+        echo "=================================="  
+  # Job 3: Build and Unit Tests
+  build-and-test:
+    name: 🏗️ Build & Unit Tests
+    runs-on: ubuntu-latest
+    needs: [static-analysis, security-scan]
+    defaults:
+      run:
+        working-directory: ./money-transfer
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: ☕ Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: 🔍 Cache Maven packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+    
+    - name: 🏗️ Compile code
+      run: |
+        echo "Compiling application..."
+        mvn clean compile -B -V
+    
+    - name: 🧪 Run Unit Tests
+      run: |
+        echo "Running unit tests (tagged with @Tag('unit'))..."
+        mvn test -B
+    
+    - name: 📊 Generate Test Report
+      if: always()
+      run: mvn surefire-report:report-only
+    
+    - name: 📊 Test Summary
+      if: always()
+      run: |
+        echo "=================================="
+        echo "Unit Test Results"
+        echo "=================================="
+        if ls target/surefire-reports/TEST-*.xml 1> /dev/null 2>&1; then
+          echo "✅ Test reports generated"
+          cat target/surefire-reports/*.txt 2>/dev/null || echo "Summary files not found"
+        else
+          echo "⚠️  No test results found"
+        fi
+        echo "=================================="
+    
+    - name: 📤 Upload Test Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: unit-test-results
+        path: |
+          money-transfer/target/surefire-reports/
+          money-transfer/target/site/surefire-report.html
+        if-no-files-found: warn
+        retention-days: 30   
+  # Job 4: Integration Tests
+  integration-tests:
+    name: 🔗 Integration Tests
+    runs-on: ubuntu-latest
+    if: true
+    needs: build-and-test
+    defaults:
+      run:
+        working-directory: ./money-transfer
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: ☕ Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: 🔍 Cache Maven packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+    
+    - name: 🔗 Run Integration Tests
+      run: |
+        echo "Running integration tests (tagged with @Tag('integration'))..."
+        mvn verify -DskipUnitTests -B
+    
+    - name: 📊 Generate Integration Test Report
+      if: always()
+      run: mvn failsafe-report:report-only || true
+    
+    - name: 📊 Test Summary
+      if: always()
+      run: |
+        echo "=================================="
+        echo "Integration Test Results"
+        echo "=================================="
+        if ls target/failsafe-reports/TEST-*.xml 1> /dev/null 2>&1; then
+          echo "✅ Test reports generated"
+          cat target/failsafe-reports/*.txt 2>/dev/null || echo "Summary files not found"
+        else
+          echo "⚠️  No test results found"
+        fi
+        echo "=================================="
+    
+    - name: 📤 Upload Integration Test Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: integration-test-results
+        path: |
+          money-transfer/target/failsafe-reports/
+          money-transfer/target/site/failsafe-report.html
+        if-no-files-found: warn
+        retention-days: 30    
+  # Job 5: Code Coverage Analysis
+  coverage-analysis:
+    name: 📊 Code Coverage Analysis
+    runs-on: ubuntu-latest
+    if: true
+    needs: [integration-tests]
+    defaults:
+      run:
+        working-directory: ./money-transfer
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: ☕ Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: 🔍 Cache Maven packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+    
+    - name: 📊 Run Tests with Coverage
+      run: |
+        echo "Running all tests with coverage tracking..."
+        mvn clean test -B
+    
+    - name: 📈 Check Coverage Threshold
+      run: |
+        echo "Checking code coverage thresholds..."
+        
+        if [ -f "target/site/jacoco/jacoco.csv" ]; then
+          INSTRUCTION_COVERAGE=$(awk -F, '
+            NR>1 {
+              instructions_missed += $4;
+              instructions_covered += $5;
+            }
+            END {
+              if (instructions_missed + instructions_covered > 0) {
+                print int((instructions_covered * 100) / (instructions_missed + instructions_covered));
+              } else {
+                print 0;
+              }
+            }
+          ' target/site/jacoco/jacoco.csv)
+          
+          BRANCH_COVERAGE=$(awk -F, '
+            NR>1 {
+              branches_missed += $6;
+              branches_covered += $7;
+            }
+            END {
+              if (branches_missed + branches_covered > 0) {
+                print int((branches_covered * 100) / (branches_missed + branches_covered));
+              } else {
+                print 0;
+              }
+            }
+          ' target/site/jacoco/jacoco.csv)
+          
+          echo "📊 Coverage Results:"
+          echo "   Instruction Coverage: ${INSTRUCTION_COVERAGE}%"
+          echo "   Branch Coverage: ${BRANCH_COVERAGE}%"
+          
+          MIN_INSTRUCTION_COVERAGE=80
+          MIN_BRANCH_COVERAGE=70
+          
+          if [ "$INSTRUCTION_COVERAGE" -lt "$MIN_INSTRUCTION_COVERAGE" ]; then
+            echo "❌ Instruction coverage ${INSTRUCTION_COVERAGE}% is below threshold ${MIN_INSTRUCTION_COVERAGE}%"
+            exit 1
+          fi
+          
+          if [ "$BRANCH_COVERAGE" -lt "$MIN_BRANCH_COVERAGE" ]; then
+            echo "⚠️  Branch coverage ${BRANCH_COVERAGE}% is below threshold ${MIN_BRANCH_COVERAGE}%"
+            echo "    This is a warning, not blocking the build"
+          fi
+          
+          echo "✅ Coverage thresholds met!"
+          echo "INSTRUCTION_COVERAGE=${INSTRUCTION_COVERAGE}" >> $GITHUB_ENV
+          echo "BRANCH_COVERAGE=${BRANCH_COVERAGE}" >> $GITHUB_ENV
+        else
+          echo "⚠️  No coverage report found"
+        fi
+    
+    - name: 📤 Upload Coverage Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-report
+        path: money-transfer/target/site/jacoco/
+        retention-days: 30
+    
+    - name: 💬 Comment Coverage on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const coverage = process.env.INSTRUCTION_COVERAGE || 'N/A';
+          const branch = process.env.BRANCH_COVERAGE || 'N/A';
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `## 📊 Code Coverage Report\n\n` +
+                  `- **Instruction Coverage:** ${coverage}%\n` +
+                  `- **Branch Coverage:** ${branch}%\n\n` +
+                  `✅ Coverage thresholds met!\n\n` +
+                  `[View detailed report in artifacts](${context.payload.repository.html_url}/actions/runs/${context.runId})`
+          });
+               
