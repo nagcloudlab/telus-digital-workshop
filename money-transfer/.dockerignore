@@ -1,0 +1,29 @@
+# Maven build output
+target/
+!target/*.jar
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+
+# Test files
+src/test/
+
+# Maven wrapper (optional)
+.mvn/
+mvnw
+mvnw.cmd

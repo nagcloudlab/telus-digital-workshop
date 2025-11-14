@@ -1,0 +1,103 @@
+name: Money Transfer Pipeline - CI/CD with Shift-Left Testing
+
+on:
+  push: # Trigger on pushes to specified branches
+    branches: [ main, develop, feature/** ]
+  pull_request: # Trigger on pull requests to specified branches
+    branches: [ main, develop ]
+  workflow_dispatch: # Manual trigger
+
+env:
+  JAVA_VERSION: '17'
+  MAVEN_OPTS: '-Xmx3072m'
+
+jobs:
+  # Job 1: Static Code Analysis (Shift-Left)
+  static-analysis:
+    name: 🔍 Static Code Analysis
+    runs-on: ubuntu-latest
+    if: true
+    defaults:
+      run:
+        working-directory: ./money-transfer
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: ☕ Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: 🏗️ Build Project
+      run: mvn clean compile -DskipTests -B
+    
+    - name: 🔍 Run Checkstyle
+      run: |
+        echo "Running Checkstyle for code style violations..."
+        mvn checkstyle:checkstyle -B || true
+      continue-on-error: true
+    
+    - name: 📊 Run PMD
+      run: |
+        echo "Running PMD for code quality issues..."
+        mvn pmd:pmd -B || true
+      continue-on-error: true
+    
+    - name: 📋 Analysis Summary
+      if: always()
+      run: |
+        echo "=================================="
+        echo "Static Analysis Complete"
+        echo "=================================="
+        if [ -f "target/site/checkstyle.html" ]; then
+          echo "✅ Checkstyle report generated"
+        fi
+        if [ -f "target/site/pmd.html" ]; then
+          echo "✅ PMD report generated"
+        fi
+        echo "Download reports from Artifacts"
+        echo "=================================="
+    
+    - name: 📤 Upload Checkstyle Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: checkstyle-report
+        path: money-transfer/target/site/checkstyle.html
+        if-no-files-found: warn
+    
+    - name: 📤 Upload PMD Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pmd-report
+        path: money-transfer/target/site/pmd.html
+        if-no-files-found: warn    
+  # Job 2: Security Scan (Gitleaks Only - Fast)
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    if: true
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    - name: 🔐 Check for Secrets with Gitleaks
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      continue-on-error: true
+    - name: 📋 Security Summary
+      if: always()
+      run: |
+        echo "=================================="
+        echo "Security Scan Complete"
+        echo "=================================="
+        echo "✅ Gitleaks secret scan completed"
+        echo "Note: OWASP Dependency Check removed for speed"
+        echo "Recommendation: Run OWASP separately weekly"
+        echo "=================================="      

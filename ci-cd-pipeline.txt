@@ -1,0 +1,106 @@
+
+
+CI/CD Pipeline - with GitHub Actions
+-----------------------------------------------
+
+- workflow: ci-cd-pipeline.yml
+- triggers: push, pull_request
+- environment: Dev, Stage, Prod
+
+Workflow -> job(s) -> step(s)
+
+Job 1: 🔍 Static Code Analysis
+SonarQube: Analyzes code for bugs and vulnerabilities
+Checkstyle: Checks code style violations
+PMD: Analyzes code quality issues
+SpotBugs: Detects potential bugs in Java code
+Uploads reports as artifacts
+
+Job 2: 🔒 Security Scan
+Gitleaks: Scans for leaked secrets in code
+Fast security check without OWASP dependency scan
+Checkmarx: Comprehensive security analysis
+
+Job 3: 🏗️ Build & Unit Tests ( depends on Job1 & Job2)
+Compiles Java code with Maven
+Runs unit tests (tagged with @Tag('unit'))
+Generates test reports
+Uploads test results as artifacts
+
+Job 4: 🔗 Integration Tests
+Runs integration tests (tagged with @Tag('integration'))
+Uses Maven Failsafe plugin
+Generates and uploads integration test reports
+
+Job 5: 📊 Code Coverage Analysis
+Runs all tests with JaCoCo coverage tracking
+Checks coverage thresholds (10% minimum)
+Comments coverage results on PRs
+Uploads coverage reports
+
+Job 6: 🔥 Smoke & Performance Tests
+Packages application as JAR
+Starts application and validates health endpoints
+Performs basic load testing (100 concurrent requests)
+Measures response time and throughput
+Comments results on PRs
+
+Job 7: 📋 Contract Tests ( Shift Testing )
+Generates OpenAPI contract specification
+Validates API endpoints against contract
+Tests: Health, Create Account, List Accounts, Transfer Money
+Success rate calculation and reporting
+Uploads API contract as artifact
+
+Job 8: 🐳 Build Docker Image
+Builds multi-platform Docker image
+Tags with PR number or branch + commit SHA
+Tests container startup and health endpoints
+Saves image as compressed artifact
+Generates build report
+Comments on PRs with image details
+
+Job 9: 🔒 Scan Docker Image (Disabled)
+Downloads and loads Docker image
+Runs Trivy vulnerability scanner
+Checks for Critical/High/Medium/Low vulnerabilities
+Security gate evaluation (blocks on critical CVEs)
+Uploads SARIF reports to GitHub Security
+Comments scan results on PRs
+
+Job 10: 📦 Package & Artifacts
+Generates semantic version from POM + build number
+Creates release package with:
+Application JAR
+Docker image
+Kubernetes manifest
+Deployment guide
+Release notes
+Build metadata (JSON)
+Creates checksums for verification
+Uploads complete release package
+Comments package info on PRs
+
+Job 11: 🚀 Deploy to Dev Envi. ( Skip )
+Downloads deployment artifacts
+Simulates Docker deployment to Dev environment
+Runs post-deployment health checks
+Executes smoke tests
+Generates deployment summary
+
+Job 12: 🎯 Deploy to Stage Envi With Manual-Approval (1 ) ( AWS cloud )
+Pre-deployment verification
+Prepares for AWS ECS Fargate deployment
+Provides deployment workflow information
+Acts as trigger point for AWS staging deployment
+Requires GitHub Environment approval
+
+
+Job 13: 🎯 Deploy to Prod Envi With Manual-Approval (2) ( Azure cloud )
+Pre-deployment verification
+Prepares for AWS ECS Fargate deployment
+Provides deployment workflow information
+Acts as trigger point for AWS staging deployment
+Requires GitHub Environment approval
+
+Job 14: 🧹 Cleanup Old Artifacts

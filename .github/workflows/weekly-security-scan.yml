@@ -1,0 +1,28 @@
+# .github/workflows/weekly-security-scan.yml
+name: Weekly Security Scan
+on:
+  schedule:
+    - cron: '0 0 * * 0'   # Every Sunday
+  workflow_dispatch:      # Manual trigger
+jobs:
+  owasp-scan:
+    name: 🔒 OWASP Dependency Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./money-transfer
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: maven
+    - name: Run OWASP Check
+      run: mvn org.owasp:dependency-check-maven:12.1.9:check -B
+    - name: Upload Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: owasp-report
+        path: money-transfer/target/dependency-check-report.html

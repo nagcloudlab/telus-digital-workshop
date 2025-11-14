@@ -1,0 +1,19 @@
+
+
+
+Java-language build tools
+========================
+    - Maven ( XML based ).  
+        - https://www.slideshare.net/slideshow/an-introduction-to-maven/12787488?from_search=1
+    - Gradle ( Groovy / Kotlin based )
+    - SBT ( Scala based )
+    ...
+
+CI/CD Tools
+========================
+    - Jenkins
+    - GitLab CI/CD
+    - Travis CI
+    - CircleCI
+    - GitHub Actions
+    ...
