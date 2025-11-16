@@ -5,8 +5,9 @@ variable "aws_region" {
 }
 
 variable "vpc_id" {
-  description = "vpc-0ed6dfbb7342dc21f"
+  description = "Existing VPC ID to use"
   type        = string
+  default     = "vpc-0ed6dfbb7342dc21f"
 }
 
 variable "instance_type" {
