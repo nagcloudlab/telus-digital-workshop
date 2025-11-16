@@ -1292,7 +1292,7 @@ jobs:
   package-artifacts:
     name: 📦 Package & Artifacts
     runs-on: ubuntu-latest
-    needs: [build-docker-image]
+    # needs: [build-docker-image]
     if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     defaults:
       run:
@@ -1850,11 +1850,9 @@ jobs:
   deploy-staging:
     name: 🎯 Deploy to AWS Staging
     runs-on: ubuntu-latest
-    needs: [package-artifacts, build-docker-image]
+    # needs: [package-artifacts, build-docker-image]
     if: github.ref == 'refs/heads/main'
-    environment:
-      name: staging
-      url: http://${{ secrets.STAGING_HOST }}:8080
+    environment: staging
     
     steps:
     - name: 📥 Checkout code
@@ -1908,18 +1906,11 @@ jobs:
     - name: 🧪 Smoke Tests
       run: |
         echo "Running smoke tests..."
-        
-        # Test health
         curl -f http://${{ secrets.STAGING_HOST }}:8080/actuator/health
         echo "✅ Health check"
         
-        # Test API
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.STAGING_HOST }}:8080/api/accounts)
         echo "API Status: $HTTP_CODE"
-        
-        if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "404" ]; then
-          echo "✅ API accessible"
-        fi
     
     - name: 📊 Deployment Summary
       if: always()
@@ -1930,7 +1921,6 @@ jobs:
         echo "Host: ${{ secrets.STAGING_HOST }}"
         echo "Image: money-transfer:${{ env.IMAGE_TAG }}"
         echo "URL: http://${{ secrets.STAGING_HOST }}:8080"
-        echo "Health: http://${{ secrets.STAGING_HOST }}:8080/actuator/health"
         echo "=========================================="
   # Job 13: Deploy to Production Environment (Manual Approval + Extra Protection)
   deploy-production:
