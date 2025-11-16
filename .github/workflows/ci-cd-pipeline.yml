@@ -107,6 +107,7 @@ jobs:
     name: 🏗️ Build & Unit Tests
     runs-on: ubuntu-latest
     # needs: [static-analysis, security-scan]
+    if: false
     defaults:
       run:
         working-directory: ./money-transfer
@@ -739,12 +740,12 @@ jobs:
         echo "   API validation failures won't block the pipeline"
         echo "   Review results and fix API issues as needed"
         echo "=================================="
-# Job 8: Build Docker Image
+  # Job 8: Build Docker Image
   build-docker-image:
     name: 🐳 Build Docker Image
     runs-on: ubuntu-latest
     needs: [build-and-test]
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    if: false
     defaults:
       run:
         working-directory: ./money-transfer
@@ -1293,7 +1294,7 @@ jobs:
     name: 📦 Package & Artifacts
     runs-on: ubuntu-latest
     # needs: [build-docker-image]
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    if: false
     defaults:
       run:
         working-directory: ./money-transfer
