@@ -24,89 +24,43 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
     
-    - name: 🏗️ Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.6.0
-        terraform_wrapper: false
-    
-    - name: 🔧 Terraform Init
-      working-directory: money-transfer/infrastructure/terraform/aws/staging
-      run: |
-        echo "Initializing Terraform..."
-        terraform init || true
-        echo "✅ Terraform initialized"
-    
-    - name: 🧹 Destroy Existing Infrastructure
-      working-directory: money-transfer/infrastructure/terraform/aws/staging
-      env:
-        TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
-      run: |
-        echo "Destroying existing infrastructure..."
-        terraform destroy -auto-approve || echo "Nothing to destroy or destroy failed"
-        echo "✅ Terraform destroy complete"
-    
-    - name: 🧹 Manual Cleanup of All Resources
+    - name: 🧹 Complete Cleanup of All Resources
       run: |
         echo "========================================"
-        echo "Cleaning up all money-transfer resources"
+        echo "Complete Cleanup of Money Transfer Resources"
         echo "========================================"
         
-        # 1. Delete IAM Role and policies
-        echo "1. Cleaning up IAM resources..."
-        
-        # Detach policies from role
-        ROLE_NAME="money-transfer-ec2-role"
-        POLICIES=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || echo "")
-        for policy in $POLICIES; do
-          echo "   Detaching policy: $policy"
-          aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $policy 2>/dev/null || true
-        done
-        
-        # Delete instance profiles
-        PROFILE_NAME="money-transfer-ec2-profile"
-        aws iam remove-role-from-instance-profile --instance-profile-name $PROFILE_NAME --role-name $ROLE_NAME 2>/dev/null || true
-        aws iam delete-instance-profile --instance-profile-name $PROFILE_NAME 2>/dev/null || true
-        echo "   Deleted instance profile"
-        
-        # Delete role
-        aws iam delete-role --role-name $ROLE_NAME 2>/dev/null && echo "   ✅ Deleted IAM role" || echo "   ⏭️  No IAM role to delete"
-        
-        # 2. Delete Key Pair
-        echo "2. Deleting SSH key pair..."
-        aws ec2 delete-key-pair --key-name money-transfer-key --region ${{ env.AWS_REGION }} 2>/dev/null && echo "   ✅ Deleted key pair" || echo "   ⏭️  No key pair"
-        
-        # 3. Terminate EC2 instances
-        echo "3. Terminating EC2 instances..."
+        # 1. Terminate EC2 Instances
+        echo "1. Terminating EC2 instances..."
         INSTANCE_IDS=$(aws ec2 describe-instances --region ${{ env.AWS_REGION }} \
-          --filters "Name=tag:Name,Values=money-transfer-app" "Name=instance-state-name,Values=running,stopped,pending,stopping" \
+          --filters "Name=tag:Name,Values=money-transfer-app" \
+                    "Name=instance-state-name,Values=running,stopped,pending,stopping" \
           --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || echo "")
         
         if [ ! -z "$INSTANCE_IDS" ]; then
           for instance_id in $INSTANCE_IDS; do
-            echo "   Terminating instance: $instance_id"
-            aws ec2 terminate-instances --instance-ids $instance_id --region ${{ env.AWS_REGION }} 2>/dev/null || true
+            echo "   Terminating: $instance_id"
+            aws ec2 terminate-instances --instance-ids $instance_id --region ${{ env.AWS_REGION }} || true
           done
-          echo "   Waiting 30 seconds for instances to terminate..."
-          sleep 30
+          echo "   Waiting 60 seconds for termination..."
+          sleep 60
         else
           echo "   ⏭️  No instances to terminate"
         fi
         
-        # 4. Release Elastic IPs
-        echo "4. Releasing Elastic IPs..."
+        # 2. Release Elastic IPs
+        echo "2. Releasing Elastic IPs..."
         EIP_ALLOCS=$(aws ec2 describe-addresses --region ${{ env.AWS_REGION }} \
           --filters "Name=tag:Name,Values=money-transfer-eip" \
           --query 'Addresses[].AllocationId' --output text 2>/dev/null || echo "")
         
         for eip in $EIP_ALLOCS; do
           if [ ! -z "$eip" ]; then
-            echo "   Releasing EIP: $eip"
+            echo "   Releasing tagged EIP: $eip"
             aws ec2 release-address --allocation-id $eip --region ${{ env.AWS_REGION }} 2>/dev/null || true
           fi
         done
         
-        # Also release any unattached EIPs
         UNATTACHED_EIPS=$(aws ec2 describe-addresses --region ${{ env.AWS_REGION }} \
           --query 'Addresses[?AssociationId==null].AllocationId' --output text 2>/dev/null || echo "")
         
@@ -119,27 +73,60 @@ jobs:
         
         echo "   ✅ EIPs released"
         
-        # 5. Delete Security Groups
-        echo "5. Deleting security groups..."
+        # 3. Delete Security Groups
+        echo "3. Deleting security groups..."
+        sleep 15
+        
         SG_IDS=$(aws ec2 describe-security-groups --region ${{ env.AWS_REGION }} \
-          --filters "Name=group-name,Values=money-transfer-ec2-sg" \
+          --filters "Name=group-name,Values=money-transfer-ec2-sg*" \
           --query 'SecurityGroups[].GroupId' --output text 2>/dev/null || echo "")
         
         for sg_id in $SG_IDS; do
           if [ ! -z "$sg_id" ]; then
             echo "   Deleting security group: $sg_id"
-            aws ec2 delete-security-group --group-id $sg_id --region ${{ env.AWS_REGION }} 2>/dev/null || true
+            for i in {1..10}; do
+              aws ec2 delete-security-group --group-id $sg_id --region ${{ env.AWS_REGION }} 2>/dev/null && echo "   ✅ Deleted" && break || sleep 10
+            done
           fi
         done
         
-        echo "   ✅ Security groups cleaned"
+        # 4. Delete Key Pairs
+        echo "4. Deleting SSH key pairs..."
+        KEY_NAMES=$(aws ec2 describe-key-pairs --region ${{ env.AWS_REGION }} \
+          --filters "Name=key-name,Values=money-transfer-key*" \
+          --query 'KeyPairs[].KeyName' --output text 2>/dev/null || echo "")
         
-        # 6. Clean Terraform state
-        echo "6. Cleaning Terraform state..."
-        rm -rf money-transfer/infrastructure/terraform/aws/staging/.terraform/
-        rm -f money-transfer/infrastructure/terraform/aws/staging/terraform.tfstate*
-        rm -f money-transfer/infrastructure/terraform/aws/staging/tfplan
-        echo "   ✅ Terraform state cleaned"
+        for key_name in $KEY_NAMES; do
+          if [ ! -z "$key_name" ]; then
+            echo "   Deleting key: $key_name"
+            aws ec2 delete-key-pair --key-name $key_name --region ${{ env.AWS_REGION }} || true
+          fi
+        done
+        
+        # 5. Delete IAM Resources
+        echo "5. Deleting IAM resources..."
+        ROLE_NAMES=$(aws iam list-roles --query 'Roles[?starts_with(RoleName, `money-transfer-ec2-role`)].RoleName' --output text 2>/dev/null || echo "")
+        
+        for role_name in $ROLE_NAMES; do
+          if [ ! -z "$role_name" ]; then
+            echo "   Processing role: $role_name"
+            
+            POLICIES=$(aws iam list-attached-role-policies --role-name $role_name \
+              --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || echo "")
+            for policy in $POLICIES; do
+              aws iam detach-role-policy --role-name $role_name --policy-arn $policy 2>/dev/null || true
+            done
+            
+            PROFILES=$(aws iam list-instance-profiles-for-role --role-name $role_name \
+              --query 'InstanceProfiles[].InstanceProfileName' --output text 2>/dev/null || echo "")
+            for profile in $PROFILES; do
+              aws iam remove-role-from-instance-profile --instance-profile-name $profile --role-name $role_name 2>/dev/null || true
+              aws iam delete-instance-profile --instance-profile-name $profile 2>/dev/null || true
+            done
+            
+            aws iam delete-role --role-name $role_name 2>/dev/null && echo "   ✅ Deleted role" || true
+          fi
+        done
         
         echo ""
         echo "========================================"
@@ -292,7 +279,6 @@ jobs:
       run: |
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > money-transfer-key.pem
         chmod 600 money-transfer-key.pem
-        ls -lah money-transfer-key.pem
     
     - name: ⏳ Wait for EC2 to be ready
       env:
@@ -320,21 +306,14 @@ jobs:
         JAR_FILE=$(ls -1 ./artifacts/*.jar | head -1)
         
         if [ -z "$JAR_FILE" ]; then
-          echo "❌ ERROR: No JAR file found in artifacts directory!"
-          ls -lah ./artifacts/
+          echo "❌ ERROR: No JAR file found!"
           exit 1
         fi
         
         echo "Found JAR: $JAR_FILE"
-        ls -lah "$JAR_FILE"
-        
         echo "Uploading JAR to EC2..."
-        scp -v -i money-transfer-key.pem -o StrictHostKeyChecking=no \
+        scp -i money-transfer-key.pem -o StrictHostKeyChecking=no \
           "$JAR_FILE" ubuntu@${EC2_IP}:/tmp/money-transfer.jar
-        
-        echo "Verifying upload..."
-        ssh -i money-transfer-key.pem -o StrictHostKeyChecking=no ubuntu@${EC2_IP} \
-          "ls -lah /tmp/money-transfer.jar"
         
         echo "✅ JAR uploaded successfully"
     
@@ -349,15 +328,18 @@ jobs:
           
           echo "Checking if JAR exists..."
           if [ ! -f /tmp/money-transfer.jar ]; then
-            echo "❌ ERROR: JAR file not found at /tmp/money-transfer.jar"
-            ls -lah /tmp/
+            echo "❌ ERROR: JAR file not found"
             exit 1
           fi
           
           echo "JAR file found, proceeding with deployment..."
           
+          # Create application user if doesn't exist
+          echo "Creating application user..."
+          sudo useradd -r -s /bin/false money-transfer 2>/dev/null || echo "User already exists"
+          
           echo "Stopping existing service if running..."
-          sudo systemctl stop money-transfer 2>/dev/null || echo "Service not running (first deployment)"
+          sudo systemctl stop money-transfer 2>/dev/null || echo "Service not running"
           
           echo "Creating application directory..."
           sudo mkdir -p /opt/money-transfer
@@ -366,16 +348,38 @@ jobs:
           sudo mv /tmp/money-transfer.jar /opt/money-transfer/money-transfer.jar
           
           echo "Setting permissions..."
-          sudo chown money-transfer:money-transfer /opt/money-transfer/money-transfer.jar
+          sudo chown -R money-transfer:money-transfer /opt/money-transfer
           sudo chmod 755 /opt/money-transfer/money-transfer.jar
           
-          echo "Verifying JAR in final location..."
-          ls -lah /opt/money-transfer/money-transfer.jar
+          # Create systemd service if doesn't exist
+          if [ ! -f /etc/systemd/system/money-transfer.service ]; then
+            echo "Creating systemd service..."
+            sudo bash -c 'cat > /etc/systemd/system/money-transfer.service << SERVICE
+[Unit]
+Description=Money Transfer Application
+After=network.target
+
+[Service]
+Type=simple
+User=money-transfer
+WorkingDirectory=/opt/money-transfer
+ExecStart=/usr/bin/java -Xmx512m -Xms256m -jar /opt/money-transfer/money-transfer.jar
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=money-transfer
+
+[Install]
+WantedBy=multi-user.target
+SERVICE'
+          fi
           
           echo "Reloading systemd..."
           sudo systemctl daemon-reload
           
-          echo "Starting service..."
+          echo "Enabling and starting service..."
+          sudo systemctl enable money-transfer
           sudo systemctl start money-transfer
           
           echo "Waiting for startup..."
@@ -407,6 +411,8 @@ jobs:
         EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
       run: |
         echo "Checking application health..."
+        echo "URL: http://${EC2_IP}:8080/actuator/health"
+        
         MAX_ATTEMPTS=30
         ATTEMPT=0
         
@@ -415,7 +421,7 @@ jobs:
           
           if [ "$HTTP_CODE" == "200" ]; then
             echo "✅ Health check passed!"
-            curl -s http://${EC2_IP}:8080/actuator/health
+            curl -s http://${EC2_IP}:8080/actuator/health | jq '.' 2>/dev/null || curl -s http://${EC2_IP}:8080/actuator/health
             exit 0
           fi
           
@@ -427,7 +433,7 @@ jobs:
         echo "❌ Health check failed"
         exit 1
 
-  # Job 5: Summary
+  # Job 5: Deployment Summary
   deployment-summary:
     name: 📊 Deployment Summary
     runs-on: ubuntu-latest
@@ -435,14 +441,23 @@ jobs:
     if: always()
     
     steps:
-    - name: 📊 Summary
+    - name: 📊 Generate Summary
       env:
         EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
         EC2_ID: ${{ needs.terraform-deploy.outputs.ec2_instance_id }}
       run: |
-        echo "✅ DEPLOYMENT SUCCESSFUL!"
-        echo ""
-        echo "Application: http://${EC2_IP}:8080"
-        echo "Health: http://${EC2_IP}:8080/actuator/health"
-        echo "H2 Console: http://${EC2_IP}:8080/h2-console"
-        echo "SSH: ssh -i money-transfer-key.pem ubuntu@${EC2_IP}"
+        cat << EOF
+        
+        ╔═══════════════════════════════════════════╗
+        ║   ✅ EC2 DEPLOYMENT SUCCESSFUL! ✅        ║
+        ╚═══════════════════════════════════════════╝
+        
+        📍 Application URL: http://${EC2_IP}:8080
+        🏥 Health Check: http://${EC2_IP}:8080/actuator/health
+        💾 H2 Console: http://${EC2_IP}:8080/h2-console
+        🔑 SSH: ssh -i money-transfer-key.pem ubuntu@${EC2_IP}
+        
+        📊 Instance: ${EC2_ID}
+        🌍 Region: ${{ env.AWS_REGION }}
+        
+        EOF
