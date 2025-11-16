@@ -146,10 +146,8 @@ resource "aws_instance" "staging_app" {
     encrypted             = true
   }
 
-  user_data = base64encode(templatefile("${path.module}/user-data.sh", {
-    app_version = var.app_version
-    environment = "staging"
-  }))
+  # CHANGED: Use file() instead of templatefile()
+  user_data = base64encode(file("${path.module}/user-data.sh"))
 
   monitoring = true
 

@@ -1846,110 +1846,94 @@ jobs:
         echo "Status: Running"
         echo "URL: http://dev.money-transfer.local"
         echo "=================================="
-  # Job 12: Deploy to Staging Environment (Manual Approval)
+  # Job 12: Deploy to AWS Staging
   deploy-staging:
-    name: 🎯 Deploy to Staging
+    name: 🎯 Deploy to AWS Staging
     runs-on: ubuntu-latest
-    needs: deploy-dev
+    needs: [package-artifacts, build-docker-image]
     if: github.ref == 'refs/heads/main'
     environment:
       name: staging
-      url: http://staging.money-transfer.local
+      url: http://${{ vars.STAGING_HOST }}:8080
     
     steps:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
     
-    - name: 📥 Download Artifacts
+    - name: 📥 Download Docker Image
       uses: actions/download-artifact@v4
       with:
-        name: deployment-artifacts
-        path: ./artifacts
+        name: docker-image
+        path: .
     
-    - name: 📋 Pre-Deployment Checklist
+    - name: 🔐 Setup SSH Key
       run: |
-        echo "=================================="
-        echo "Pre-Deployment Checklist"
-        echo "=================================="
-        echo "✅ Dev deployment successful"
-        echo "✅ All tests passed"
-        echo "✅ Security scans clean"
-        echo "✅ Artifacts verified"
-        echo "✅ Manual approval received"
-        echo "=================================="
-        echo ""
-        echo "Proceeding with Staging deployment..."
+        mkdir -p ~/.ssh
+        echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/staging_key
+        chmod 600 ~/.ssh/staging_key
+        eval $(ssh-agent -s)
+        ssh-add ~/.ssh/staging_key
+        ssh-keyscan -H ${{ vars.STAGING_HOST }} >> ~/.ssh/known_hosts
     
-    - name: 📦 Prepare Staging Deployment
+    - name: 📦 Get Image Info
       run: |
-        echo "=================================="
-        echo "🎯 Deploying to Staging"
-        echo "=================================="
-        echo "Version: $(cat artifacts/build-metadata.json | jq -r '.version')"
-        echo "Environment: Staging"
-        echo "Deployment Type: Manual Approval Required"
-        echo "=================================="
+        IMAGE_FILE=$(ls money-transfer-*.tar.gz | head -1)
+        IMAGE_TAG=$(echo $IMAGE_FILE | sed 's/money-transfer-//;s/.tar.gz//')
+        echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+        echo "IMAGE_FILE=$IMAGE_FILE" >> $GITHUB_ENV
+        echo "Found: $IMAGE_FILE (tag: $IMAGE_TAG)"
     
-    - name: 🐳 Simulate Docker Deployment to Staging
+    - name: 🚀 Deploy to EC2
+      env:
+        STAGING_HOST: ${{ vars.STAGING_HOST }}
+        STAGING_USER: ${{ vars.STAGING_USER }}
       run: |
-        echo "Simulating Docker deployment to Staging environment..."
-        echo ""
-        echo "Commands that would run in real deployment:"
-        echo "  1. docker load < docker-image.tar.gz"
-        echo "  2. docker tag money-transfer:latest money-transfer:staging"
-        echo "  3. docker stop money-transfer-staging || true"
-        echo "  4. docker rm money-transfer-staging || true"
-        echo "  5. docker run -d \\"
-        echo "       --name money-transfer-staging \\"
-        echo "       -p 8080:8080 \\"
-        echo "       -e SPRING_PROFILES_ACTIVE=staging \\"
-        echo "       -e JAVA_OPTS='-Xmx512m' \\"
-        echo "       money-transfer:staging"
-        echo ""
-        echo "✅ Simulated deployment successful"
+        chmod +x .github/scripts/deploy-to-staging.sh
+        ./.github/scripts/deploy-to-staging.sh $STAGING_HOST $STAGING_USER $IMAGE_TAG
     
-    - name: 🏥 Post-Deployment Health Check
+    - name: 🏥 Health Check
       run: |
-        echo "Running comprehensive health checks..."
-        echo ""
-        echo "Health check results:"
-        echo "  ✅ Application started"
-        echo "  ✅ Health endpoint responding"
-        echo "  ✅ Database connection pool healthy"
-        echo "  ✅ All API endpoints accessible"
-        echo "  ✅ Memory usage normal"
-        echo "  ✅ CPU usage normal"
-        echo ""
-        echo "Health check URL: http://staging.money-transfer.local/actuator/health"
+        echo "Waiting for application..."
+        sleep 15
+        
+        for i in {1..10}; do
+          if curl -f http://${{ vars.STAGING_HOST }}:8080/actuator/health; then
+            echo "✅ Health check passed!"
+            exit 0
+          fi
+          echo "Attempt $i/10..."
+          sleep 5
+        done
+        echo "❌ Health check failed"
+        exit 1
     
-    - name: 🧪 Integration Tests
+    - name: 🧪 Smoke Tests
       run: |
-        echo "Running integration tests in Staging environment..."
-        echo ""
-        echo "Integration test suite:"
-        echo "  ✅ API Contract Tests - PASSED"
-        echo "  ✅ Database Integration - PASSED"
-        echo "  ✅ End-to-End Workflows - PASSED"
-        echo "  ✅ Performance Tests - PASSED"
-        echo "  ✅ Security Tests - PASSED"
-        echo ""
-        echo "All integration tests passed! ✅"
+        echo "Running smoke tests..."
+        
+        # Test health
+        curl -f http://${{ vars.STAGING_HOST }}:8080/actuator/health
+        echo "✅ Health check"
+        
+        # Test API
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${{ vars.STAGING_HOST }}:8080/api/accounts)
+        echo "API Status: $HTTP_CODE"
+        
+        if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "404" ]; then
+          echo "✅ API accessible"
+        fi
     
     - name: 📊 Deployment Summary
+      if: always()
       run: |
-        VERSION=$(cat artifacts/build-metadata.json | jq -r '.version')
-        
-        echo "=================================="
-        echo "✅ STAGING DEPLOYMENT SUCCESSFUL"
-        echo "=================================="
-        echo "Environment: Staging"
-        echo "Version: ${VERSION}"
-        echo "Deployed At: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-        echo "Status: Running"
-        echo "URL: http://staging.money-transfer.local"
-        echo ""
-        echo "Next: Production deployment (requires approval)"
-        echo "=================================="
+        echo "=========================================="
+        echo "AWS Staging Deployment"
+        echo "=========================================="
+        echo "Host: ${{ vars.STAGING_HOST }}"
+        echo "Image: money-transfer:${{ env.IMAGE_TAG }}"
+        echo "URL: http://${{ vars.STAGING_HOST }}:8080"
+        echo "Health: http://${{ vars.STAGING_HOST }}:8080/actuator/health"
+        echo "=========================================="
   # Job 13: Deploy to Production Environment (Manual Approval + Extra Protection)
   deploy-production:
     name: 🌟 Deploy to Production
