@@ -1,8 +1,13 @@
 name: Deploy to AWS Staging
 on:
-  # push:
+  # workflow_run: # Triggered after successful CI/CD pipeline
+  #   workflows: ["Money Transfer Pipeline - CI/CD with Shift-Left Testing"]
+  #   types:
+  #     - completed
   #   branches: [main]
-  workflow_dispatch:
+  # push: # Triggered on push to main branch
+  #   branches: [main]
+  workflow_dispatch:   # Manual trigger
 env:
   AWS_REGION: us-south-1
   ENVIRONMENT: staging
