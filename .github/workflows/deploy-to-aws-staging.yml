@@ -277,16 +277,30 @@ jobs:
         name: money-transfer-jar
         path: ./artifacts
     
+    - name: 🔍 Verify JAR Downloaded
+      run: |
+        echo "Checking for JAR file..."
+        ls -lah ./artifacts/
+        JAR_COUNT=$(ls -1 ./artifacts/*.jar 2>/dev/null | wc -l)
+        if [ $JAR_COUNT -eq 0 ]; then
+          echo "❌ ERROR: No JAR file found!"
+          exit 1
+        fi
+        echo "✅ Found $JAR_COUNT JAR file(s)"
+    
     - name: 🔑 Setup SSH Key
       run: |
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > money-transfer-key.pem
         chmod 600 money-transfer-key.pem
+        ls -lah money-transfer-key.pem
     
     - name: ⏳ Wait for EC2 to be ready
       env:
         EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
       run: |
         echo "Waiting for EC2 instance to be ready..."
+        echo "EC2 IP: ${EC2_IP}"
+        
         for i in {1..40}; do
           if ssh -i money-transfer-key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@${EC2_IP} "echo 'ready'" 2>/dev/null; then
             echo "✅ EC2 is ready!"
@@ -302,28 +316,81 @@ jobs:
       env:
         EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
       run: |
-        JAR_FILE=$(ls artifacts/*.jar | head -1)
-        echo "Uploading: $JAR_FILE"
-        scp -i money-transfer-key.pem -o StrictHostKeyChecking=no \
-          $JAR_FILE ubuntu@${EC2_IP}:/tmp/money-transfer.jar
-        echo "✅ JAR uploaded"
+        echo "Finding JAR file..."
+        JAR_FILE=$(ls -1 ./artifacts/*.jar | head -1)
+        
+        if [ -z "$JAR_FILE" ]; then
+          echo "❌ ERROR: No JAR file found in artifacts directory!"
+          ls -lah ./artifacts/
+          exit 1
+        fi
+        
+        echo "Found JAR: $JAR_FILE"
+        ls -lah "$JAR_FILE"
+        
+        echo "Uploading JAR to EC2..."
+        scp -v -i money-transfer-key.pem -o StrictHostKeyChecking=no \
+          "$JAR_FILE" ubuntu@${EC2_IP}:/tmp/money-transfer.jar
+        
+        echo "Verifying upload..."
+        ssh -i money-transfer-key.pem -o StrictHostKeyChecking=no ubuntu@${EC2_IP} \
+          "ls -lah /tmp/money-transfer.jar"
+        
+        echo "✅ JAR uploaded successfully"
     
     - name: 🚀 Deploy and Start Application
       env:
         EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
       run: |
+        echo "Deploying application on EC2..."
+        
         ssh -i money-transfer-key.pem -o StrictHostKeyChecking=no ubuntu@${EC2_IP} << 'ENDSSH'
           set -e
-          sudo systemctl stop money-transfer || true
+          
+          echo "Checking if JAR exists..."
+          if [ ! -f /tmp/money-transfer.jar ]; then
+            echo "❌ ERROR: JAR file not found at /tmp/money-transfer.jar"
+            ls -lah /tmp/
+            exit 1
+          fi
+          
+          echo "JAR file found, proceeding with deployment..."
+          
+          echo "Stopping existing service if running..."
+          sudo systemctl stop money-transfer 2>/dev/null || echo "Service not running (first deployment)"
+          
+          echo "Creating application directory..."
+          sudo mkdir -p /opt/money-transfer
+          
+          echo "Moving JAR to application directory..."
           sudo mv /tmp/money-transfer.jar /opt/money-transfer/money-transfer.jar
+          
+          echo "Setting permissions..."
           sudo chown money-transfer:money-transfer /opt/money-transfer/money-transfer.jar
           sudo chmod 755 /opt/money-transfer/money-transfer.jar
+          
+          echo "Verifying JAR in final location..."
+          ls -lah /opt/money-transfer/money-transfer.jar
+          
+          echo "Reloading systemd..."
           sudo systemctl daemon-reload
+          
+          echo "Starting service..."
           sudo systemctl start money-transfer
-          sleep 15
+          
+          echo "Waiting for startup..."
+          sleep 20
+          
+          echo "Checking service status..."
           sudo systemctl status money-transfer --no-pager || true
-          echo "✅ Application deployed"
+          
+          echo "Checking application logs..."
+          sudo journalctl -u money-transfer -n 50 --no-pager
+          
+          echo "✅ Application deployed and started"
         ENDSSH
+        
+        echo "✅ Deployment complete"
 
   # Job 4: Health Check
   health-check:
