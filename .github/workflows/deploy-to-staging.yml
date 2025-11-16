@@ -9,9 +9,6 @@ env:
 
 jobs:
 
-  # ---------------------------
-  # Job 0: Complete Cleanup
-  # ---------------------------
   cleanup:
     name: 🧹 Cleanup Existing Infrastructure
     runs-on: ubuntu-latest
@@ -36,92 +33,48 @@ jobs:
       - name: 🔧 Terraform Init
         working-directory: money-transfer/infrastructure/terraform/aws/staging
         run: |
-          echo "Initializing Terraform..."
           terraform init || true
-          echo "Terraform initialized"
 
       - name: 🧹 Destroy Existing Infrastructure
         working-directory: money-transfer/infrastructure/terraform/aws/staging
         env:
           TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
         run: |
-          echo "Destroying existing infrastructure..."
-          terraform destroy -auto-approve || echo "Nothing to destroy or destroy failed"
-          echo "Terraform destroy complete"
+          terraform destroy -auto-approve || true
 
       - name: 🧹 Manual Cleanup of All Resources
         run: |
-          echo "========================================"
-          echo "Cleaning up all money-transfer resources"
-          echo "========================================"
-
           ROLE_NAME="money-transfer-ec2-role"
           PROFILE_NAME="money-transfer-ec2-profile"
 
-          echo "Removing IAM policies..."
           POLICIES=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[].PolicyArn' --output text || echo "")
-          for policy in $POLICIES; do
-            aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $policy || true
-          done
+          for policy in $POLICIES; do aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $policy || true; done
 
-          echo "Removing instance profile..."
           aws iam remove-role-from-instance-profile --instance-profile-name $PROFILE_NAME --role-name $ROLE_NAME || true
           aws iam delete-instance-profile --instance-profile-name $PROFILE_NAME || true
-
-          echo "Removing IAM role..."
           aws iam delete-role --role-name $ROLE_NAME || true
 
-          echo "Deleting SSH key..."
           aws ec2 delete-key-pair --key-name money-transfer-key --region $AWS_REGION || true
 
-          echo "Terminating EC2 instances..."
           INSTANCE_IDS=$(aws ec2 describe-instances --region $AWS_REGION \
             --filters "Name=tag:Name,Values=money-transfer-app" \
                       "Name=instance-state-name,Values=running,stopped,pending,stopping" \
             --query 'Reservations[].Instances[].InstanceId' --output text || echo "")
-          if [ -n "$INSTANCE_IDS" ]; then
-            aws ec2 terminate-instances --instance-ids $INSTANCE_IDS --region $AWS_REGION || true
-            echo "Waiting 60 seconds for termination..."
-            sleep 60
-          fi
+          if [ -n "$INSTANCE_IDS" ]; then aws ec2 terminate-instances --instance-ids $INSTANCE_IDS --region $AWS_REGION || true; sleep 60; fi
 
-          echo "Releasing EIPs..."
-          EIP_ALLOCS=$(aws ec2 describe-addresses --region $AWS_REGION \
-            --filters "Name=tag:Name,Values=money-transfer-eip" \
-            --query 'Addresses[].AllocationId' --output text || echo "")
-          for eip in $EIP_ALLOCS; do
-            aws ec2 release-address --allocation-id $eip --region $AWS_REGION || true
-          done
+          EIP_ALLOCS=$(aws ec2 describe-addresses --region $AWS_REGION --filters "Name=tag:Name,Values=money-transfer-eip" --query 'Addresses[].AllocationId' --output text || echo "")
+          for eip in $EIP_ALLOCS; do aws ec2 release-address --allocation-id $eip --region $AWS_REGION || true; done
 
-          UNATTACHED_EIPS=$(aws ec2 describe-addresses --region $AWS_REGION \
-            --query 'Addresses[?AssociationId==null].AllocationId' --output text || echo "")
-          for eip in $UNATTACHED_EIPS; do
-            aws ec2 release-address --allocation-id $eip --region $AWS_REGION || true
-          done
+          UNATTACHED_EIPS=$(aws ec2 describe-addresses --region $AWS_REGION --query 'Addresses[?AssociationId==null].AllocationId' --output text || echo "")
+          for eip in $UNATTACHED_EIPS; do aws ec2 release-address --allocation-id $eip --region $AWS_REGION || true; done
 
-          echo "Deleting security groups..."
-          sleep 15
-          SG_IDS=$(aws ec2 describe-security-groups --region $AWS_REGION \
-            --filters "Name=group-name,Values=money-transfer-ec2-sg*" \
-            --query 'SecurityGroups[].GroupId' --output text || echo "")
-          for sg in $SG_IDS; do
-            for attempt in {1..10}; do
-              aws ec2 delete-security-group --group-id $sg --region $AWS_REGION && break || sleep 10
-            done
-          done
+          SG_IDS=$(aws ec2 describe-security-groups --region $AWS_REGION --filters "Name=group-name,Values=money-transfer-ec2-sg*" --query 'SecurityGroups[].GroupId' --output text || echo "")
+          for sg in $SG_IDS; do for attempt in {1..10}; do aws ec2 delete-security-group --group-id $sg --region $AWS_REGION && break || sleep 10; done; done
 
-          echo "Cleaning Terraform state..."
           rm -rf money-transfer/infrastructure/terraform/aws/staging/.terraform/
           rm -f money-transfer/infrastructure/terraform/aws/staging/terraform.tfstate*
           rm -f money-transfer/infrastructure/terraform/aws/staging/tfplan
 
-          echo "Cleanup Complete!"
-          echo "========================================"
-
-
-  # ---------------------------
-  # Job 1: Build JAR
-  # ---------------------------
   build:
     name: 🔨 Build Application
     runs-on: ubuntu-latest
@@ -149,10 +102,6 @@ jobs:
           path: money-transfer/target/*.jar
           retention-days: 1
 
-
-  # ---------------------------
-  # Job 2: Terraform Deploy
-  # ---------------------------
   terraform-deploy:
     name: 🏗️ Terraform Infrastructure
     runs-on: ubuntu-latest
@@ -210,13 +159,6 @@ jobs:
           echo "ec2_public_ip=$IP" >> $GITHUB_OUTPUT
           echo "ec2_instance_id=$ID" >> $GITHUB_OUTPUT
 
-          echo "EC2 Public IP: $IP"
-          echo "EC2 Instance ID: $ID"
-
-
-  # ---------------------------
-  # Job 3: Deploy Application
-  # ---------------------------
   deploy-app:
     name: 🚀 Deploy Application
     runs-on: ubuntu-latest
@@ -242,10 +184,7 @@ jobs:
       - name: 🔍 Verify JAR Downloaded
         run: |
           ls -lah ./artifacts/
-          if [ "$(ls ./artifacts/*.jar 2>/dev/null | wc -l)" -eq 0 ]; then
-            echo "ERROR: No JAR found"
-            exit 1
-          fi
+          if [ "$(ls ./artifacts/*.jar 2>/dev/null | wc -l)" -eq 0 ]; then exit 1; fi
 
       - name: 🔑 Setup SSH Key
         run: |
@@ -257,7 +196,7 @@ jobs:
           EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
         run: |
           for i in {1..40}; do
-            ssh -o StrictHostKeyChecking=no -i money-transfer-key.pem ubuntu@${EC2_IP} "echo ready" && break
+            ssh -o StrictHostKeyChecking=no -i money-transfer-key.pem ubuntu@$EC2_IP "echo ready" && break
             sleep 15
           done
 
@@ -266,13 +205,13 @@ jobs:
           EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
         run: |
           JAR_FILE=$(ls ./artifacts/*.jar | head -1)
-          scp -o StrictHostKeyChecking=no -i money-transfer-key.pem "$JAR_FILE" ubuntu@${EC2_IP}:/tmp/money-transfer.jar
+          scp -o StrictHostKeyChecking=no -i money-transfer-key.pem "$JAR_FILE" ubuntu@$EC2_IP:/tmp/money-transfer.jar
 
       - name: 🚀 Deploy and Start Application
         env:
           EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
         run: |
-          ssh -o StrictHostKeyChecking=no -i money-transfer-key.pem ubuntu@${EC2_IP} << 'EOF'
+          ssh -o StrictHostKeyChecking=no -i money-transfer-key.pem ubuntu@$EC2_IP << 'EOF'
             sudo systemctl stop money-transfer || true
             sudo mkdir -p /opt/money-transfer
             sudo mv /tmp/money-transfer.jar /opt/money-transfer/money-transfer.jar
@@ -300,10 +239,6 @@ EOL'
             sleep 20
 EOF
 
-
-  # ---------------------------
-  # Job 4: Health Check
-  # ---------------------------
   health-check:
     name: 🏥 Health Check
     runs-on: ubuntu-latest
@@ -317,16 +252,12 @@ EOF
           EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
         run: |
           for i in {1..30}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${EC2_IP}:8080/actuator/health)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$EC2_IP:8080/actuator/health)
             [ "$STATUS" = "200" ] && exit 0
             sleep 10
           done
           exit 1
 
-
-  # ---------------------------
-  # Job 5: Summary
-  # ---------------------------
   deployment-summary:
     name: 📊 Deployment Summary
     runs-on: ubuntu-latest
@@ -344,6 +275,6 @@ EOF
           echo "====================================="
           echo "      🚀 Deployment Successful"
           echo "====================================="
-          echo "APP URL: http://${EC2_IP}:8080"
-          echo "HEALTH:  http://${EC2_IP}:8080/actuator/health"
-          echo "SSH:     ssh -i money-transfer-key.pem ubuntu@${EC2_IP}"
+          echo "APP URL: http://$EC2_IP:8080"
+          echo "HEALTH:  http://$EC2_IP:8080/actuator/health"
+          echo "SSH:     ssh -i money-transfer-key.pem ubuntu@$EC2_IP"
