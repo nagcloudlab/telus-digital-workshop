@@ -377,6 +377,10 @@ jobs:
           
           echo "JAR file found, proceeding with deployment..."
           
+          # Create application user if it doesn't exist
+          echo "Creating application user..."
+          sudo useradd -r -s /bin/false money-transfer 2>/dev/null || echo "User already exists"
+          
           echo "Stopping existing service if running..."
           sudo systemctl stop money-transfer 2>/dev/null || echo "Service not running (first deployment)"
           
@@ -389,12 +393,43 @@ jobs:
           echo "Setting permissions..."
           sudo chown money-transfer:money-transfer /opt/money-transfer/money-transfer.jar
           sudo chmod 755 /opt/money-transfer/money-transfer.jar
+          sudo chown -R money-transfer:money-transfer /opt/money-transfer
           
           echo "Verifying JAR in final location..."
           ls -lah /opt/money-transfer/money-transfer.jar
           
+          # Create systemd service if it doesn't exist
+          if [ ! -f /etc/systemd/system/money-transfer.service ]; then
+            echo "Creating systemd service..."
+            sudo bash -c 'cat > /etc/systemd/system/money-transfer.service << SERVICE
+[Unit]
+Description=Money Transfer Application
+After=network.target
+
+[Service]
+Type=simple
+User=money-transfer
+WorkingDirectory=/opt/money-transfer
+ExecStart=/usr/bin/java -Xmx512m -Xms256m -jar /opt/money-transfer/money-transfer.jar
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=money-transfer
+
+[Install]
+WantedBy=multi-user.target
+SERVICE'
+            echo "✅ Systemd service created"
+          else
+            echo "Systemd service already exists"
+          fi
+          
           echo "Reloading systemd..."
           sudo systemctl daemon-reload
+          
+          echo "Enabling service..."
+          sudo systemctl enable money-transfer
           
           echo "Starting service..."
           sudo systemctl start money-transfer
