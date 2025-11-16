@@ -197,13 +197,12 @@ jobs:
         env:
           EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
         run: |
-          ssh -o StrictHostKeyChecking=no -i money-transfer-key.pem ubuntu@$EC2_IP 'bash -s' << 'ENDSSH'
-            sudo systemctl stop money-transfer 2>/dev/null || true
-            sudo mkdir -p /opt/money-transfer
-            sudo mv /tmp/money-transfer.jar /opt/money-transfer/money-transfer.jar
-            sudo chown ubuntu:ubuntu /opt/money-transfer/money-transfer.jar
-            
-            sudo tee /etc/systemd/system/money-transfer.service > /dev/null << 'SVCEOF'
+          ssh -o StrictHostKeyChecking=no -i money-transfer-key.pem ubuntu@$EC2_IP << 'ENDSSH'
+          sudo systemctl stop money-transfer 2>/dev/null || true
+          sudo mkdir -p /opt/money-transfer
+          sudo mv /tmp/money-transfer.jar /opt/money-transfer/money-transfer.jar
+          sudo chown ubuntu:ubuntu /opt/money-transfer/money-transfer.jar
+          cat << 'SVCFILE' | sudo tee /etc/systemd/system/money-transfer.service
 [Unit]
 Description=Money Transfer Application
 After=network.target
@@ -217,13 +216,12 @@ Restart=always
 
 [Install]
 WantedBy=multi-user.target
-SVCEOF
-
-            sudo systemctl daemon-reload
-            sudo systemctl restart money-transfer
-            sudo systemctl enable money-transfer
-            sleep 20
-ENDSSH
+SVCFILE
+          sudo systemctl daemon-reload
+          sudo systemctl restart money-transfer
+          sudo systemctl enable money-transfer
+          sleep 20
+          ENDSSH
 
   health-check:
     name: 🏥 Health Check
