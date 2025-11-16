@@ -8,6 +8,7 @@ env:
   ENVIRONMENT: staging
 
 jobs:
+
   # Job 0: Complete Cleanup
   cleanup:
     name: 🧹 Cleanup Existing Infrastructure
@@ -55,21 +56,19 @@ jobs:
         # 1. Delete IAM Role and policies
         echo "1. Cleaning up IAM resources..."
         
-        # Detach policies from role
         ROLE_NAME="money-transfer-ec2-role"
         POLICIES=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || echo "")
+        
         for policy in $POLICIES; do
           echo "   Detaching policy: $policy"
           aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $policy 2>/dev/null || true
         done
         
-        # Delete instance profiles
         PROFILE_NAME="money-transfer-ec2-profile"
         aws iam remove-role-from-instance-profile --instance-profile-name $PROFILE_NAME --role-name $ROLE_NAME 2>/dev/null || true
         aws iam delete-instance-profile --instance-profile-name $PROFILE_NAME 2>/dev/null || true
         echo "   Deleted instance profile"
         
-        # Delete role
         aws iam delete-role --role-name $ROLE_NAME 2>/dev/null && echo "   ✅ Deleted IAM role" || echo "   ⏭️  No IAM role to delete"
         
         # 2. Delete Key Pair
@@ -106,7 +105,6 @@ jobs:
           fi
         done
         
-        # Also release any unattached EIPs
         UNATTACHED_EIPS=$(aws ec2 describe-addresses --region ${{ env.AWS_REGION }} \
           --query 'Addresses[?AssociationId==null].AllocationId' --output text 2>/dev/null || echo "")
         
@@ -116,7 +114,6 @@ jobs:
             aws ec2 release-address --allocation-id $eip --region ${{ env.AWS_REGION }} 2>/dev/null || true
           fi
         done
-        
         echo "   ✅ EIPs released"
         
         # 5. Delete Security Groups
@@ -131,7 +128,6 @@ jobs:
             aws ec2 delete-security-group --group-id $sg_id --region ${{ env.AWS_REGION }} 2>/dev/null || true
           fi
         done
-        
         echo "   ✅ Security groups cleaned"
         
         # 6. Clean Terraform state
@@ -141,7 +137,6 @@ jobs:
         rm -f money-transfer/infrastructure/terraform/aws/staging/tfplan
         echo "   ✅ Terraform state cleaned"
         
-        echo ""
         echo "========================================"
         echo "✅ Cleanup Complete!"
         echo "========================================"
@@ -356,8 +351,6 @@ jobs:
           
           echo "JAR file found, proceeding with deployment..."
 
-          # CREATE USER IF IT DOESN'T EXIST
-          echo "Creating application user..."
           sudo useradd -r -s /bin/false money-transfer 2>/dev/null || echo "User already exists"
           
           echo "Stopping existing service if running..."
@@ -370,14 +363,43 @@ jobs:
           sudo mv /tmp/money-transfer.jar /opt/money-transfer/money-transfer.jar
           
           echo "Setting permissions..."
-          sudo chown money-transfer:money-transfer /opt/money-transfer/money-transfer.jar
+          sudo chown -R money-transfer:money-transfer /opt/money-transfer
           sudo chmod 755 /opt/money-transfer/money-transfer.jar
           
           echo "Verifying JAR in final location..."
           ls -lah /opt/money-transfer/money-transfer.jar
           
+          if [ ! -f /etc/systemd/system/money-transfer.service ]; then
+            echo "Creating systemd service..."
+            sudo bash -c 'cat > /etc/systemd/system/money-transfer.service << SERVICE
+          [Unit]
+          Description=Money Transfer Application
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=money-transfer
+          WorkingDirectory=/opt/money-transfer
+          ExecStart=/usr/bin/java -Xmx512m -Xms256m -jar /opt/money-transfer/money-transfer.jar
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=money-transfer
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE'
+            echo "✅ Service file created"
+          else
+            echo "Service file already exists"
+          fi
+          
           echo "Reloading systemd..."
           sudo systemctl daemon-reload
+          
+          echo "Enabling service..."
+          sudo systemctl enable money-transfer
           
           echo "Starting service..."
           sudo systemctl start money-transfer
@@ -419,34 +441,4 @@ jobs:
           
           if [ "$HTTP_CODE" == "200" ]; then
             echo "✅ Health check passed!"
-            curl -s http://${EC2_IP}:8080/actuator/health
-            exit 0
-          fi
-          
-          ATTEMPT=$((ATTEMPT + 1))
-          echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Status: $HTTP_CODE"
-          sleep 10
-        done
-        
-        echo "❌ Health check failed"
-        exit 1
-
-  # Job 5: Summary
-  deployment-summary:
-    name: 📊 Deployment Summary
-    runs-on: ubuntu-latest
-    needs: [terraform-deploy, deploy-app, health-check]
-    if: always()
-    
-    steps:
-    - name: 📊 Summary
-      env:
-        EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
-        EC2_ID: ${{ needs.terraform-deploy.outputs.ec2_instance_id }}
-      run: |
-        echo "✅ DEPLOYMENT SUCCESSFUL!"
-        echo ""
-        echo "Application: http://${EC2_IP}:8080"
-        echo "Health: http://${EC2_IP}:8080/actuator/health"
-        echo "H2 Console: http://${EC2_IP}:8080/h2-console"
-        echo "SSH: ssh -i money-transfer-key.pem ubuntu@${EC2_IP}"
+            curl -s http:
