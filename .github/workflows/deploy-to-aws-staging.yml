@@ -9,7 +9,7 @@ on:
   #   branches: [main]
   workflow_dispatch:   # Manual trigger
 env:
-  AWS_REGION: us-south-1
+  AWS_REGION: ap-south-1
   ENVIRONMENT: staging
 
 jobs:
