@@ -90,3 +90,20 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+**/.terraform/
+**/terraform.tfvars
+**/github-secrets.txt
+*.pem
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+**/.terraform/
+**/terraform.tfvars
+**/github-secrets.txt
+*.pem
+**/.terraform.lock.hcl

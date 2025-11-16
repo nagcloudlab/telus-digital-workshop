@@ -1,0 +1,13 @@
+
+
+
+im preparing training workshop demo on
+"CI/CD with Cloud and Shift Left Testing"
+prepared demo code in "https://github.com/nagcloudlab/telus-digital-workshop", 
+a spring springboot app, exposing REST APIs.
+prepared CI/CD pipeline using GitHub Actions, as continuous delivery, right now mocked using Github Environments.
+but i need upgrade it further, staging envi in Aws, production envi in Azure using terraform.
+later need to show monitoring using prometheus and grafana.
+
+let me share the files i have prepared so far.
+

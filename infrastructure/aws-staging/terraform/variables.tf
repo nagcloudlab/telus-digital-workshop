@@ -4,21 +4,21 @@ variable "aws_region" {
   default     = "ap-south-1"
 }
 
-variable "vpc_id" {
-  description = "Existing VPC ID to use"
-  type        = string
-  default     = "vpc-0ed6dfbb7342dc21f"
-}
-
 variable "instance_type" {
   description = "EC2 instance type"
   type        = string
-  default     = "t3.small"
+  default     = "t3.medium"
 }
 
 variable "ssh_public_key" {
-  description = "SSH public key for EC2 access"
+  description = "SSH public key"
   type        = string
+}
+
+variable "app_version" {
+  description = "Application version"
+  type        = string
+  default     = "latest"
 }
 
 variable "environment" {
