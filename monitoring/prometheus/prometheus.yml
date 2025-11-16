@@ -1,0 +1,43 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'local-monitoring'
+    environment: 'staging'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Money Transfer App on AWS EC2
+  - job_name: 'money-transfer-staging'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['65.1.88.10:8080']
+        labels:
+          service: 'money-transfer'
+          environment: 'staging'
+          region: 'ap-south-1'
+
+  # System metrics from local node-exporter
+  - job_name: 'node-exporter-local'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          instance: 'local-machine'
+
+  # EC2 Health check
+  - job_name: 'money-transfer-health'
+    metrics_path: '/actuator/health'
+    static_configs:
+      - targets: ['65.1.88.10:8080']
