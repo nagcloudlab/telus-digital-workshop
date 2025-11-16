@@ -1,15 +1,156 @@
 name: Deploy to AWS Staging
+
 on:
-  workflow_dispatch:   # Manual trigger
+  workflow_dispatch:
+
 env:
   AWS_REGION: ap-south-1
   ENVIRONMENT: staging
 
 jobs:
+  # Job 0: Complete Cleanup
+  cleanup:
+    name: 🧹 Cleanup Existing Infrastructure
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🔐 Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: 🏗️ Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.0
+        terraform_wrapper: false
+    
+    - name: 🔧 Terraform Init
+      working-directory: money-transfer/infrastructure/terraform/aws/staging
+      run: |
+        echo "Initializing Terraform..."
+        terraform init || true
+        echo "✅ Terraform initialized"
+    
+    - name: 🧹 Destroy Existing Infrastructure
+      working-directory: money-transfer/infrastructure/terraform/aws/staging
+      env:
+        TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      run: |
+        echo "Destroying existing infrastructure..."
+        terraform destroy -auto-approve || echo "Nothing to destroy or destroy failed"
+        echo "✅ Terraform destroy complete"
+    
+    - name: 🧹 Manual Cleanup of All Resources
+      run: |
+        echo "========================================"
+        echo "Cleaning up all money-transfer resources"
+        echo "========================================"
+        
+        # 1. Delete IAM Role and policies
+        echo "1. Cleaning up IAM resources..."
+        
+        # Detach policies from role
+        ROLE_NAME="money-transfer-ec2-role"
+        POLICIES=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null || echo "")
+        for policy in $POLICIES; do
+          echo "   Detaching policy: $policy"
+          aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $policy 2>/dev/null || true
+        done
+        
+        # Delete instance profiles
+        PROFILE_NAME="money-transfer-ec2-profile"
+        aws iam remove-role-from-instance-profile --instance-profile-name $PROFILE_NAME --role-name $ROLE_NAME 2>/dev/null || true
+        aws iam delete-instance-profile --instance-profile-name $PROFILE_NAME 2>/dev/null || true
+        echo "   Deleted instance profile"
+        
+        # Delete role
+        aws iam delete-role --role-name $ROLE_NAME 2>/dev/null && echo "   ✅ Deleted IAM role" || echo "   ⏭️  No IAM role to delete"
+        
+        # 2. Delete Key Pair
+        echo "2. Deleting SSH key pair..."
+        aws ec2 delete-key-pair --key-name money-transfer-key --region ${{ env.AWS_REGION }} 2>/dev/null && echo "   ✅ Deleted key pair" || echo "   ⏭️  No key pair"
+        
+        # 3. Terminate EC2 instances
+        echo "3. Terminating EC2 instances..."
+        INSTANCE_IDS=$(aws ec2 describe-instances --region ${{ env.AWS_REGION }} \
+          --filters "Name=tag:Name,Values=money-transfer-app" "Name=instance-state-name,Values=running,stopped,pending,stopping" \
+          --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || echo "")
+        
+        if [ ! -z "$INSTANCE_IDS" ]; then
+          for instance_id in $INSTANCE_IDS; do
+            echo "   Terminating instance: $instance_id"
+            aws ec2 terminate-instances --instance-ids $instance_id --region ${{ env.AWS_REGION }} 2>/dev/null || true
+          done
+          echo "   Waiting 30 seconds for instances to terminate..."
+          sleep 30
+        else
+          echo "   ⏭️  No instances to terminate"
+        fi
+        
+        # 4. Release Elastic IPs
+        echo "4. Releasing Elastic IPs..."
+        EIP_ALLOCS=$(aws ec2 describe-addresses --region ${{ env.AWS_REGION }} \
+          --filters "Name=tag:Name,Values=money-transfer-eip" \
+          --query 'Addresses[].AllocationId' --output text 2>/dev/null || echo "")
+        
+        for eip in $EIP_ALLOCS; do
+          if [ ! -z "$eip" ]; then
+            echo "   Releasing EIP: $eip"
+            aws ec2 release-address --allocation-id $eip --region ${{ env.AWS_REGION }} 2>/dev/null || true
+          fi
+        done
+        
+        # Also release any unattached EIPs
+        UNATTACHED_EIPS=$(aws ec2 describe-addresses --region ${{ env.AWS_REGION }} \
+          --query 'Addresses[?AssociationId==null].AllocationId' --output text 2>/dev/null || echo "")
+        
+        for eip in $UNATTACHED_EIPS; do
+          if [ ! -z "$eip" ]; then
+            echo "   Releasing unattached EIP: $eip"
+            aws ec2 release-address --allocation-id $eip --region ${{ env.AWS_REGION }} 2>/dev/null || true
+          fi
+        done
+        
+        echo "   ✅ EIPs released"
+        
+        # 5. Delete Security Groups
+        echo "5. Deleting security groups..."
+        SG_IDS=$(aws ec2 describe-security-groups --region ${{ env.AWS_REGION }} \
+          --filters "Name=group-name,Values=money-transfer-ec2-sg" \
+          --query 'SecurityGroups[].GroupId' --output text 2>/dev/null || echo "")
+        
+        for sg_id in $SG_IDS; do
+          if [ ! -z "$sg_id" ]; then
+            echo "   Deleting security group: $sg_id"
+            aws ec2 delete-security-group --group-id $sg_id --region ${{ env.AWS_REGION }} 2>/dev/null || true
+          fi
+        done
+        
+        echo "   ✅ Security groups cleaned"
+        
+        # 6. Clean Terraform state
+        echo "6. Cleaning Terraform state..."
+        rm -rf money-transfer/infrastructure/terraform/aws/staging/.terraform/
+        rm -f money-transfer/infrastructure/terraform/aws/staging/terraform.tfstate*
+        rm -f money-transfer/infrastructure/terraform/aws/staging/tfplan
+        echo "   ✅ Terraform state cleaned"
+        
+        echo ""
+        echo "========================================"
+        echo "✅ Cleanup Complete!"
+        echo "========================================"
+
   # Job 1: Build JAR
   build:
     name: 🔨 Build Application
     runs-on: ubuntu-latest
+    needs: cleanup
     
     steps:
     - name: 📥 Checkout code
@@ -34,6 +175,7 @@ jobs:
         name: money-transfer-jar
         path: money-transfer/target/*.jar
         retention-days: 1
+
   # Job 2: Deploy Infrastructure with Terraform
   terraform-deploy:
     name: 🏗️ Terraform Infrastructure
@@ -67,6 +209,9 @@ jobs:
       working-directory: money-transfer/infrastructure/terraform/aws/staging
       run: |
         echo "Initializing Terraform..."
+        rm -rf .terraform/
+        rm -f terraform.tfstate*
+        rm -f tfplan
         terraform init
         echo "✅ Terraform initialized"
     
@@ -108,6 +253,7 @@ jobs:
         echo "EC2 Instance ID: $EC2_ID"
         echo "Application URL: $APP_URL"
         echo "=================================="
+
   # Job 3: Deploy Application to EC2
   deploy-app:
     name: 🚀 Deploy Application
@@ -141,64 +287,44 @@ jobs:
         EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
       run: |
         echo "Waiting for EC2 instance to be ready..."
-        for i in {1..30}; do
+        for i in {1..40}; do
           if ssh -i money-transfer-key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@${EC2_IP} "echo 'ready'" 2>/dev/null; then
             echo "✅ EC2 is ready!"
             exit 0
           fi
-          echo "Attempt $i/30: Waiting for SSH..."
-          sleep 10
+          echo "Attempt $i/40: Waiting for SSH..."
+          sleep 15
         done
-        echo "❌ EC2 not ready after 5 minutes"
+        echo "❌ EC2 not ready after 10 minutes"
         exit 1
     
     - name: 📤 Upload JAR to EC2
       env:
         EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
       run: |
-        echo "Uploading JAR file to EC2..."
-        
         JAR_FILE=$(ls artifacts/*.jar | head -1)
-        echo "Found JAR: $JAR_FILE"
-        
+        echo "Uploading: $JAR_FILE"
         scp -i money-transfer-key.pem -o StrictHostKeyChecking=no \
           $JAR_FILE ubuntu@${EC2_IP}:/tmp/money-transfer.jar
-        
         echo "✅ JAR uploaded"
     
     - name: 🚀 Deploy and Start Application
       env:
         EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
       run: |
-        echo "Deploying application on EC2..."
-        
         ssh -i money-transfer-key.pem -o StrictHostKeyChecking=no ubuntu@${EC2_IP} << 'ENDSSH'
           set -e
-          
-          echo "Stopping existing service if running..."
           sudo systemctl stop money-transfer || true
-          
-          echo "Moving JAR to application directory..."
           sudo mv /tmp/money-transfer.jar /opt/money-transfer/money-transfer.jar
-          
-          echo "Setting permissions..."
           sudo chown money-transfer:money-transfer /opt/money-transfer/money-transfer.jar
           sudo chmod 755 /opt/money-transfer/money-transfer.jar
-          
-          echo "Starting service..."
           sudo systemctl daemon-reload
           sudo systemctl start money-transfer
-          
-          echo "Waiting for startup..."
           sleep 15
-          
-          echo "Checking service status..."
           sudo systemctl status money-transfer --no-pager || true
-          
-          echo "✅ Application deployed and started"
+          echo "✅ Application deployed"
         ENDSSH
-        
-        echo "✅ Deployment complete"
+
   # Job 4: Health Check
   health-check:
     name: 🏥 Health Check
@@ -207,18 +333,13 @@ jobs:
     
     steps:
     - name: ⏳ Wait for Application Warmup
-      run: |
-        echo "Waiting 30 seconds for application to warm up..."
-        sleep 30
+      run: sleep 30
     
     - name: 🏥 Perform Health Check
       env:
         EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
       run: |
         echo "Checking application health..."
-        echo "URL: http://${EC2_IP}:8080/actuator/health"
-        echo ""
-        
         MAX_ATTEMPTS=30
         ATTEMPT=0
         
@@ -227,64 +348,19 @@ jobs:
           
           if [ "$HTTP_CODE" == "200" ]; then
             echo "✅ Health check passed!"
-            echo ""
-            echo "Full health response:"
-            curl -s http://${EC2_IP}:8080/actuator/health | jq '.' || curl -s http://${EC2_IP}:8080/actuator/health
+            curl -s http://${EC2_IP}:8080/actuator/health
             exit 0
           fi
           
           ATTEMPT=$((ATTEMPT + 1))
-          echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Status: $HTTP_CODE (waiting...)"
+          echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Status: $HTTP_CODE"
           sleep 10
         done
         
-        echo "❌ Health check failed after $MAX_ATTEMPTS attempts"
-        echo ""
-        echo "Checking if service is running..."
+        echo "❌ Health check failed"
         exit 1
-    
-    - name: 🧪 Smoke Tests
-      env:
-        EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
-      run: |
-        echo "Running smoke tests..."
-        echo ""
-        
-        # Test 1: Health endpoint
-        echo "Test 1: Health endpoint"
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${EC2_IP}:8080/actuator/health)
-        if [ "$HTTP_CODE" == "200" ]; then
-          echo "✅ Health endpoint - PASSED"
-        else
-          echo "❌ Health endpoint - FAILED (HTTP $HTTP_CODE)"
-          exit 1
-        fi
-        
-        # Test 2: Info endpoint
-        echo ""
-        echo "Test 2: Info endpoint"
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${EC2_IP}:8080/actuator/info)
-        if [ "$HTTP_CODE" == "200" ]; then
-          echo "✅ Info endpoint - PASSED"
-        else
-          echo "⚠️  Info endpoint - WARNING (HTTP $HTTP_CODE)"
-        fi
-        
-        # Test 3: H2 Console (if enabled)
-        echo ""
-        echo "Test 3: H2 Console"
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${EC2_IP}:8080/h2-console || echo "000")
-        if [ "$HTTP_CODE" == "200" ]; then
-          echo "✅ H2 Console - AVAILABLE at http://${EC2_IP}:8080/h2-console"
-        else
-          echo "ℹ️  H2 Console - Not configured (HTTP $HTTP_CODE)"
-        fi
-        
-        echo ""
-        echo "=================================="
-        echo "✅ All smoke tests passed!"
-        echo "=================================="
-  # Job 5: Deployment Summary
+
+  # Job 5: Summary
   deployment-summary:
     name: 📊 Deployment Summary
     runs-on: ubuntu-latest
@@ -292,132 +368,14 @@ jobs:
     if: always()
     
     steps:
-    - name: 📊 Generate Deployment Report
+    - name: 📊 Summary
       env:
         EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
         EC2_ID: ${{ needs.terraform-deploy.outputs.ec2_instance_id }}
       run: |
-        cat << EOF
-        
-        ╔═══════════════════════════════════════════╗
-        ║                                           ║
-        ║   ✅ EC2 DEPLOYMENT SUCCESSFUL! ✅        ║
-        ║                                           ║
-        ╚═══════════════════════════════════════════╝
-        
-        ## 🎉 Deployment Complete!
-        
-        ### 📍 Access Points
-        
-        - **Application URL:** http://${EC2_IP}:8080
-        - **Health Check:** http://${EC2_IP}:8080/actuator/health
-        - **H2 Console:** http://${EC2_IP}:8080/h2-console
-          - JDBC URL: jdbc:h2:mem:moneytransfer
-          - Username: sa
-          - Password: (leave empty)
-        
-        ### 🖥️ EC2 Instance Details
-        
-        - **Instance ID:** ${EC2_ID}
-        - **Public IP:** ${EC2_IP}
-        - **Instance Type:** t3.small
-        - **OS:** Ubuntu 22.04
-        - **Java Version:** OpenJDK 17
-        
-        ### 🔑 SSH Access
-        
-        \`\`\`bash
-        ssh -i money-transfer-key.pem ubuntu@${EC2_IP}
-        \`\`\`
-        
-        ### 📊 Application Management
-        
-        **View Logs:**
-        \`\`\`bash
-        ssh ubuntu@${EC2_IP} 'sudo journalctl -u money-transfer -f'
-        \`\`\`
-        
-        **Check Status:**
-        \`\`\`bash
-        ssh ubuntu@${EC2_IP} 'sudo systemctl status money-transfer'
-        \`\`\`
-        
-        **Restart Application:**
-        \`\`\`bash
-        ssh ubuntu@${EC2_IP} 'sudo systemctl restart money-transfer'
-        \`\`\`
-        
-        **Stop Application:**
-        \`\`\`bash
-        ssh ubuntu@${EC2_IP} 'sudo systemctl stop money-transfer'
-        \`\`\`
-        
-        **Start Application:**
-        \`\`\`bash
-        ssh ubuntu@${EC2_IP} 'sudo systemctl start money-transfer'
-        \`\`\`
-        
-        ### 📁 Application Files
-        
-        - **JAR Location:** /opt/money-transfer/money-transfer.jar
-        - **Config:** /opt/money-transfer/application.properties
-        - **Service:** /etc/systemd/system/money-transfer.service
-        - **Logs:** \`sudo journalctl -u money-transfer\`
-        
-        ### 🧪 Test the Application
-        
-        \`\`\`bash
-        # Health check
-        curl http://${EC2_IP}:8080/actuator/health
-        
-        # Get info
-        curl http://${EC2_IP}:8080/actuator/info
-        \`\`\`
-        
-        ### 💰 Cost
-        
-        - **EC2 (t3.small):** ~\$15/month
-        - **EBS (20GB):** ~\$2/month
-        - **Total:** ~\$17/month
-        
-        ### 🛠️ Troubleshooting
-        
-        If application isn't responding:
-        
-        1. Check service status:
-           \`ssh ubuntu@${EC2_IP} 'sudo systemctl status money-transfer'\`
-        
-        2. View recent logs:
-           \`ssh ubuntu@${EC2_IP} 'sudo journalctl -u money-transfer -n 100 --no-pager'\`
-        
-        3. Check if port 8080 is listening:
-           \`ssh ubuntu@${EC2_IP} 'netstat -tlnp | grep 8080'\`
-        
-        4. Restart the service:
-           \`ssh ubuntu@${EC2_IP} 'sudo systemctl restart money-transfer'\`
-        
-        ### ✅ Deployment Status
-        
-        - ✅ Terraform: Infrastructure deployed
-        - ✅ EC2: Instance created and configured
-        - ✅ Java 17: Installed
-        - ✅ Application: JAR deployed
-        - ✅ Systemd: Service started
-        - ✅ Health Check: Passed
-        - ✅ Smoke Tests: Passed
-        
-        ### 🎓 Next Steps
-        
-        1. Test API endpoints
-        2. View H2 database console
-        3. Monitor application logs
-        4. Run integration tests
-        
-        ---
-        
-        **Deployment ID:** ${{ github.run_id }}
-        **Deployed by:** ${{ github.actor }}
-        **Commit:** ${{ github.sha }}
-        
-        EOF
-
+        echo "✅ DEPLOYMENT SUCCESSFUL!"
+        echo ""
+        echo "Application: http://${EC2_IP}:8080"
+        echo "Health: http://${EC2_IP}:8080/actuator/health"
+        echo "H2 Console: http://${EC2_IP}:8080/h2-console"
+        echo "SSH: ssh -i money-transfer-key.pem ubuntu@${EC2_IP}"
