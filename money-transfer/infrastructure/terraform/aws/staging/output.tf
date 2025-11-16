@@ -22,3 +22,18 @@ output "ec2_instance_id" {
   description = "EC2 instance ID"
   value       = aws_instance.app.id
 }
+
+output "vpc_id" {
+  description = "VPC ID being used"
+  value       = data.aws_vpc.existing.id
+}
+
+output "subnet_id" {
+  description = "Subnet ID being used"
+  value       = data.aws_subnets.public.ids[0]
+}
+
+output "security_group_id" {
+  description = "Security Group ID"
+  value       = aws_security_group.ec2.id
+}
