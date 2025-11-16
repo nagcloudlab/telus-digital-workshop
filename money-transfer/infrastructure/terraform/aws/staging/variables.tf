@@ -5,7 +5,7 @@ variable "aws_region" {
 }
 
 variable "vpc_id" {
-  description = "Existing VPC ID to use"
+  description = "vpc-0ed6dfbb7342dc21f"
   type        = string
 }
 
