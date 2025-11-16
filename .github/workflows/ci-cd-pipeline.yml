@@ -1759,7 +1759,7 @@ jobs:
         echo "Next: Job 11 - Deploy to Environments"
         echo "=================================="   
   # Job 11: Deploy to Development Environment
-  # deploy-dev:
+  deploy-dev:
     name: 🚀 Deploy to Dev
     runs-on: ubuntu-latest
     needs: package-artifacts
