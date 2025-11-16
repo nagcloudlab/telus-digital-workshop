@@ -107,7 +107,7 @@ jobs:
     name: 🏗️ Build & Unit Tests
     runs-on: ubuntu-latest
     # needs: [static-analysis, security-scan]
-    if: false
+    if: true
     defaults:
       run:
         working-directory: ./money-transfer
@@ -745,7 +745,7 @@ jobs:
     name: 🐳 Build Docker Image
     runs-on: ubuntu-latest
     needs: [build-and-test]
-    if: false
+    if: true
     defaults:
       run:
         working-directory: ./money-transfer
@@ -1293,7 +1293,7 @@ jobs:
   package-artifacts:
     name: 📦 Package & Artifacts
     runs-on: ubuntu-latest
-    # needs: [build-docker-image]
+    needs: [build-docker-image]
     if: false
     defaults:
       run:
@@ -1851,7 +1851,7 @@ jobs:
   deploy-staging:
     name: 🎯 Deploy to AWS Staging
     runs-on: ubuntu-latest
-    # needs: [package-artifacts, build-docker-image]
+    needs: [package-artifacts, build-docker-image]
     if: github.ref == 'refs/heads/main'
     environment: staging
     
