@@ -1871,9 +1871,13 @@ jobs:
         mkdir -p ~/.ssh
         echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/staging_key
         chmod 600 ~/.ssh/staging_key
+        
+        # Add SSH key to agent
         eval $(ssh-agent -s)
         ssh-add ~/.ssh/staging_key
-        ssh-keyscan -H ${{ vars.STAGING_HOST }} >> ~/.ssh/known_hosts
+        
+        # Add host to known_hosts (FIXED)
+        ssh-keyscan -H ${{ vars.STAGING_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
     
     - name: 📦 Get Image Info
       run: |
