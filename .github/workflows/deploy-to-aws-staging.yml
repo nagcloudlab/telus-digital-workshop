@@ -87,8 +87,8 @@ jobs:
             echo "   Terminating instance: $instance_id"
             aws ec2 terminate-instances --instance-ids $instance_id --region ${{ env.AWS_REGION }} 2>/dev/null || true
           done
-          echo "   Waiting 60 seconds for instances to terminate..."
-          sleep 60
+          echo "   Waiting 30 seconds for instances to terminate..."
+          sleep 30
         else
           echo "   ⏭️  No instances to terminate"
         fi
@@ -121,20 +121,18 @@ jobs:
         
         # 5. Delete Security Groups
         echo "5. Deleting security groups..."
-        sleep 15
-        
         SG_IDS=$(aws ec2 describe-security-groups --region ${{ env.AWS_REGION }} \
-          --filters "Name=group-name,Values=money-transfer-ec2-sg*" \
+          --filters "Name=group-name,Values=money-transfer-ec2-sg" \
           --query 'SecurityGroups[].GroupId' --output text 2>/dev/null || echo "")
         
         for sg_id in $SG_IDS; do
           if [ ! -z "$sg_id" ]; then
             echo "   Deleting security group: $sg_id"
-            for i in {1..10}; do
-              aws ec2 delete-security-group --group-id $sg_id --region ${{ env.AWS_REGION }} 2>/dev/null && echo "   ✅ Deleted" && break || sleep 10
-            done
+            aws ec2 delete-security-group --group-id $sg_id --region ${{ env.AWS_REGION }} 2>/dev/null || true
           fi
         done
+        
+        echo "   ✅ Security groups cleaned"
         
         # 6. Clean Terraform state
         echo "6. Cleaning Terraform state..."
@@ -357,8 +355,8 @@ jobs:
           fi
           
           echo "JAR file found, proceeding with deployment..."
-          
-          # CREATE USER IF IT DOESN'T EXIST - THIS IS THE FIX!
+
+          # CREATE USER IF IT DOESN'T EXIST
           echo "Creating application user..."
           sudo useradd -r -s /bin/false money-transfer 2>/dev/null || echo "User already exists"
           
@@ -372,41 +370,16 @@ jobs:
           sudo mv /tmp/money-transfer.jar /opt/money-transfer/money-transfer.jar
           
           echo "Setting permissions..."
-          sudo chown -R money-transfer:money-transfer /opt/money-transfer
+          sudo chown money-transfer:money-transfer /opt/money-transfer/money-transfer.jar
           sudo chmod 755 /opt/money-transfer/money-transfer.jar
           
           echo "Verifying JAR in final location..."
           ls -lah /opt/money-transfer/money-transfer.jar
           
-          # CREATE SYSTEMD SERVICE IF IT DOESN'T EXIST
-          if [ ! -f /etc/systemd/system/money-transfer.service ]; then
-            echo "Creating systemd service..."
-            sudo bash -c 'cat > /etc/systemd/system/money-transfer.service << SERVICE
-[Unit]
-Description=Money Transfer Application
-After=network.target
-
-[Service]
-Type=simple
-User=money-transfer
-WorkingDirectory=/opt/money-transfer
-ExecStart=/usr/bin/java -Xmx512m -Xms256m -jar /opt/money-transfer/money-transfer.jar
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=money-transfer
-
-[Install]
-WantedBy=multi-user.target
-SERVICE'
-          fi
-          
           echo "Reloading systemd..."
           sudo systemctl daemon-reload
           
-          echo "Enabling and starting service..."
-          sudo systemctl enable money-transfer
+          echo "Starting service..."
           sudo systemctl start money-transfer
           
           echo "Waiting for startup..."
