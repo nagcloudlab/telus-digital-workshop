@@ -1294,7 +1294,7 @@ jobs:
     name: 📦 Package & Artifacts
     runs-on: ubuntu-latest
     needs: [build-docker-image]
-    if: false
+    if: true
     defaults:
       run:
         working-directory: ./money-transfer
