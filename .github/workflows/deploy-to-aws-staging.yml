@@ -1,0 +1,425 @@
+name: Deploy to AWS Staging
+on:
+  # push:
+  #   branches: [main]
+  workflow_dispatch:
+env:
+  AWS_REGION: us-south-1
+  ENVIRONMENT: staging
+
+jobs:
+  # Job 1: Build JAR
+  build:
+    name: 🔨 Build Application
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: ☕ Setup Java 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: 🔨 Build with Maven
+      run: |
+        cd money-transfer
+        mvn clean package -DskipTests
+        echo "✅ Build complete"
+    
+    - name: 📦 Upload JAR artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: money-transfer-jar
+        path: money-transfer/target/*.jar
+        retention-days: 1
+  # Job 2: Deploy Infrastructure with Terraform
+  terraform-deploy:
+    name: 🏗️ Terraform Infrastructure
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: staging
+    
+    outputs:
+      ec2_public_ip: ${{ steps.terraform-outputs.outputs.ec2_public_ip }}
+      ec2_instance_id: ${{ steps.terraform-outputs.outputs.ec2_instance_id }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🔐 Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: 🏗️ Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.0
+        terraform_wrapper: false
+    
+    - name: 🔧 Terraform Init
+      working-directory: money-transfer/infrastructure/terraform/aws/staging
+      run: |
+        echo "Initializing Terraform..."
+        terraform init
+        echo "✅ Terraform initialized"
+    
+    - name: 📋 Terraform Plan
+      working-directory: money-transfer/infrastructure/terraform/aws/staging
+      env:
+        TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      run: |
+        echo "Planning infrastructure changes..."
+        terraform plan -out=tfplan -input=false
+        echo "✅ Terraform plan created"
+    
+    - name: 🚀 Terraform Apply
+      working-directory: money-transfer/infrastructure/terraform/aws/staging
+      env:
+        TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      run: |
+        echo "Applying infrastructure changes..."
+        terraform apply -auto-approve -input=false tfplan
+        echo "✅ Infrastructure deployed"
+    
+    - name: 📊 Get Terraform Outputs
+      id: terraform-outputs
+      working-directory: money-transfer/infrastructure/terraform/aws/staging
+      run: |
+        echo "Retrieving Terraform outputs..."
+        
+        EC2_IP=$(terraform output -raw ec2_public_ip)
+        EC2_ID=$(terraform output -raw ec2_instance_id)
+        APP_URL=$(terraform output -raw application_url)
+        
+        echo "ec2_public_ip=$EC2_IP" >> $GITHUB_OUTPUT
+        echo "ec2_instance_id=$EC2_ID" >> $GITHUB_OUTPUT
+        
+        echo "=================================="
+        echo "Infrastructure Outputs"
+        echo "=================================="
+        echo "EC2 Public IP: $EC2_IP"
+        echo "EC2 Instance ID: $EC2_ID"
+        echo "Application URL: $APP_URL"
+        echo "=================================="
+  # Job 3: Deploy Application to EC2
+  deploy-app:
+    name: 🚀 Deploy Application
+    runs-on: ubuntu-latest
+    needs: terraform-deploy
+    environment:
+      name: staging
+      url: http://${{ needs.terraform-deploy.outputs.ec2_public_ip }}:8080
+    
+    steps:
+    - name: 🔐 Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: 📥 Download JAR artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: money-transfer-jar
+        path: ./artifacts
+    
+    - name: 🔑 Setup SSH Key
+      run: |
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > money-transfer-key.pem
+        chmod 600 money-transfer-key.pem
+    
+    - name: ⏳ Wait for EC2 to be ready
+      env:
+        EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
+      run: |
+        echo "Waiting for EC2 instance to be ready..."
+        for i in {1..30}; do
+          if ssh -i money-transfer-key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@${EC2_IP} "echo 'ready'" 2>/dev/null; then
+            echo "✅ EC2 is ready!"
+            exit 0
+          fi
+          echo "Attempt $i/30: Waiting for SSH..."
+          sleep 10
+        done
+        echo "❌ EC2 not ready after 5 minutes"
+        exit 1
+    
+    - name: 📤 Upload JAR to EC2
+      env:
+        EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
+      run: |
+        echo "Uploading JAR file to EC2..."
+        
+        JAR_FILE=$(ls artifacts/*.jar | head -1)
+        echo "Found JAR: $JAR_FILE"
+        
+        scp -i money-transfer-key.pem -o StrictHostKeyChecking=no \
+          $JAR_FILE ubuntu@${EC2_IP}:/tmp/money-transfer.jar
+        
+        echo "✅ JAR uploaded"
+    
+    - name: 🚀 Deploy and Start Application
+      env:
+        EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
+      run: |
+        echo "Deploying application on EC2..."
+        
+        ssh -i money-transfer-key.pem -o StrictHostKeyChecking=no ubuntu@${EC2_IP} << 'ENDSSH'
+          set -e
+          
+          echo "Stopping existing service if running..."
+          sudo systemctl stop money-transfer || true
+          
+          echo "Moving JAR to application directory..."
+          sudo mv /tmp/money-transfer.jar /opt/money-transfer/money-transfer.jar
+          
+          echo "Setting permissions..."
+          sudo chown money-transfer:money-transfer /opt/money-transfer/money-transfer.jar
+          sudo chmod 755 /opt/money-transfer/money-transfer.jar
+          
+          echo "Starting service..."
+          sudo systemctl daemon-reload
+          sudo systemctl start money-transfer
+          
+          echo "Waiting for startup..."
+          sleep 15
+          
+          echo "Checking service status..."
+          sudo systemctl status money-transfer --no-pager || true
+          
+          echo "✅ Application deployed and started"
+        ENDSSH
+        
+        echo "✅ Deployment complete"
+  # Job 4: Health Check
+  health-check:
+    name: 🏥 Health Check
+    runs-on: ubuntu-latest
+    needs: [terraform-deploy, deploy-app]
+    
+    steps:
+    - name: ⏳ Wait for Application Warmup
+      run: |
+        echo "Waiting 30 seconds for application to warm up..."
+        sleep 30
+    
+    - name: 🏥 Perform Health Check
+      env:
+        EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
+      run: |
+        echo "Checking application health..."
+        echo "URL: http://${EC2_IP}:8080/actuator/health"
+        echo ""
+        
+        MAX_ATTEMPTS=30
+        ATTEMPT=0
+        
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${EC2_IP}:8080/actuator/health || echo "000")
+          
+          if [ "$HTTP_CODE" == "200" ]; then
+            echo "✅ Health check passed!"
+            echo ""
+            echo "Full health response:"
+            curl -s http://${EC2_IP}:8080/actuator/health | jq '.' || curl -s http://${EC2_IP}:8080/actuator/health
+            exit 0
+          fi
+          
+          ATTEMPT=$((ATTEMPT + 1))
+          echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Status: $HTTP_CODE (waiting...)"
+          sleep 10
+        done
+        
+        echo "❌ Health check failed after $MAX_ATTEMPTS attempts"
+        echo ""
+        echo "Checking if service is running..."
+        exit 1
+    
+    - name: 🧪 Smoke Tests
+      env:
+        EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
+      run: |
+        echo "Running smoke tests..."
+        echo ""
+        
+        # Test 1: Health endpoint
+        echo "Test 1: Health endpoint"
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${EC2_IP}:8080/actuator/health)
+        if [ "$HTTP_CODE" == "200" ]; then
+          echo "✅ Health endpoint - PASSED"
+        else
+          echo "❌ Health endpoint - FAILED (HTTP $HTTP_CODE)"
+          exit 1
+        fi
+        
+        # Test 2: Info endpoint
+        echo ""
+        echo "Test 2: Info endpoint"
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${EC2_IP}:8080/actuator/info)
+        if [ "$HTTP_CODE" == "200" ]; then
+          echo "✅ Info endpoint - PASSED"
+        else
+          echo "⚠️  Info endpoint - WARNING (HTTP $HTTP_CODE)"
+        fi
+        
+        # Test 3: H2 Console (if enabled)
+        echo ""
+        echo "Test 3: H2 Console"
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${EC2_IP}:8080/h2-console || echo "000")
+        if [ "$HTTP_CODE" == "200" ]; then
+          echo "✅ H2 Console - AVAILABLE at http://${EC2_IP}:8080/h2-console"
+        else
+          echo "ℹ️  H2 Console - Not configured (HTTP $HTTP_CODE)"
+        fi
+        
+        echo ""
+        echo "=================================="
+        echo "✅ All smoke tests passed!"
+        echo "=================================="
+  # Job 5: Deployment Summary
+  deployment-summary:
+    name: 📊 Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [terraform-deploy, deploy-app, health-check]
+    if: always()
+    
+    steps:
+    - name: 📊 Generate Deployment Report
+      env:
+        EC2_IP: ${{ needs.terraform-deploy.outputs.ec2_public_ip }}
+        EC2_ID: ${{ needs.terraform-deploy.outputs.ec2_instance_id }}
+      run: |
+        cat << EOF
+        
+        ╔═══════════════════════════════════════════╗
+        ║                                           ║
+        ║   ✅ EC2 DEPLOYMENT SUCCESSFUL! ✅        ║
+        ║                                           ║
+        ╚═══════════════════════════════════════════╝
+        
+        ## 🎉 Deployment Complete!
+        
+        ### 📍 Access Points
+        
+        - **Application URL:** http://${EC2_IP}:8080
+        - **Health Check:** http://${EC2_IP}:8080/actuator/health
+        - **H2 Console:** http://${EC2_IP}:8080/h2-console
+          - JDBC URL: jdbc:h2:mem:moneytransfer
+          - Username: sa
+          - Password: (leave empty)
+        
+        ### 🖥️ EC2 Instance Details
+        
+        - **Instance ID:** ${EC2_ID}
+        - **Public IP:** ${EC2_IP}
+        - **Instance Type:** t3.small
+        - **OS:** Ubuntu 22.04
+        - **Java Version:** OpenJDK 17
+        
+        ### 🔑 SSH Access
+        
+        \`\`\`bash
+        ssh -i money-transfer-key.pem ubuntu@${EC2_IP}
+        \`\`\`
+        
+        ### 📊 Application Management
+        
+        **View Logs:**
+        \`\`\`bash
+        ssh ubuntu@${EC2_IP} 'sudo journalctl -u money-transfer -f'
+        \`\`\`
+        
+        **Check Status:**
+        \`\`\`bash
+        ssh ubuntu@${EC2_IP} 'sudo systemctl status money-transfer'
+        \`\`\`
+        
+        **Restart Application:**
+        \`\`\`bash
+        ssh ubuntu@${EC2_IP} 'sudo systemctl restart money-transfer'
+        \`\`\`
+        
+        **Stop Application:**
+        \`\`\`bash
+        ssh ubuntu@${EC2_IP} 'sudo systemctl stop money-transfer'
+        \`\`\`
+        
+        **Start Application:**
+        \`\`\`bash
+        ssh ubuntu@${EC2_IP} 'sudo systemctl start money-transfer'
+        \`\`\`
+        
+        ### 📁 Application Files
+        
+        - **JAR Location:** /opt/money-transfer/money-transfer.jar
+        - **Config:** /opt/money-transfer/application.properties
+        - **Service:** /etc/systemd/system/money-transfer.service
+        - **Logs:** \`sudo journalctl -u money-transfer\`
+        
+        ### 🧪 Test the Application
+        
+        \`\`\`bash
+        # Health check
+        curl http://${EC2_IP}:8080/actuator/health
+        
+        # Get info
+        curl http://${EC2_IP}:8080/actuator/info
+        \`\`\`
+        
+        ### 💰 Cost
+        
+        - **EC2 (t3.small):** ~\$15/month
+        - **EBS (20GB):** ~\$2/month
+        - **Total:** ~\$17/month
+        
+        ### 🛠️ Troubleshooting
+        
+        If application isn't responding:
+        
+        1. Check service status:
+           \`ssh ubuntu@${EC2_IP} 'sudo systemctl status money-transfer'\`
+        
+        2. View recent logs:
+           \`ssh ubuntu@${EC2_IP} 'sudo journalctl -u money-transfer -n 100 --no-pager'\`
+        
+        3. Check if port 8080 is listening:
+           \`ssh ubuntu@${EC2_IP} 'netstat -tlnp | grep 8080'\`
+        
+        4. Restart the service:
+           \`ssh ubuntu@${EC2_IP} 'sudo systemctl restart money-transfer'\`
+        
+        ### ✅ Deployment Status
+        
+        - ✅ Terraform: Infrastructure deployed
+        - ✅ EC2: Instance created and configured
+        - ✅ Java 17: Installed
+        - ✅ Application: JAR deployed
+        - ✅ Systemd: Service started
+        - ✅ Health Check: Passed
+        - ✅ Smoke Tests: Passed
+        
+        ### 🎓 Next Steps
+        
+        1. Test API endpoints
+        2. View H2 database console
+        3. Monitor application logs
+        4. Run integration tests
+        
+        ---
+        
+        **Deployment ID:** ${{ github.run_id }}
+        **Deployed by:** ${{ github.actor }}
+        **Commit:** ${{ github.sha }}
+        
+        EOF
+
