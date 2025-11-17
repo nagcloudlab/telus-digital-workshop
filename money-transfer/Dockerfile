@@ -26,11 +26,6 @@ LABEL description="Money Transfer Application - Production"
 # Create non-root user for security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# Create logs directory with proper permissions
-RUN mkdir -p /logs && \
-    chown -R spring:spring /logs && \
-    chmod 755 /logs
-
 WORKDIR /app
 
 # Copy JAR from builder stage
