@@ -1,6 +1,5 @@
 #!/bin/bash
 echo "🔄 Restarting Monitoring Stack..."
-docker compose restart
-sleep 5
-docker compose ps
+docker-compose restart
 echo "✅ Stack restarted!"
+docker-compose ps

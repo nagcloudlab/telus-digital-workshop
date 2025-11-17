@@ -1,80 +1,131 @@
 groups:
-  - name: money_transfer_alerts
+  - name: application_alerts
     interval: 30s
     rules:
-      # Application is down
+      # Critical: Application Down
       - alert: ApplicationDown
         expr: up{job="money-transfer-staging"} == 0
         for: 1m
         labels:
           severity: critical
           service: money-transfer
+          team: backend
         annotations:
           summary: "Money Transfer Application is DOWN"
-          description: "The Money Transfer application on {{ $labels.instance }} has been down for more than 1 minute."
+          description: "The Money Transfer application has been unreachable for more than 1 minute."
+          runbook_url: "https://wiki.company.com/runbooks/app-down"
 
-      # High error rate
+      # Critical: High Error Rate
       - alert: HighErrorRate
-        expr: rate(http_server_requests_seconds_count{status=~"5.."}[5m]) > 0.05
+        expr: |
+          (
+            sum(rate(http_server_requests_seconds_count{job="money-transfer-staging",status=~"5.."}[5m]))
+            /
+            sum(rate(http_server_requests_seconds_count{job="money-transfer-staging"}[5m]))
+          ) > 0.05
         for: 2m
         labels:
           severity: critical
           service: money-transfer
+          team: backend
         annotations:
           summary: "High error rate detected"
-          description: "Error rate is {{ $value | humanize }} errors/second on {{ $labels.uri }}"
+          description: "Error rate is {{ $value | humanizePercentage }} (>5%) for {{ $labels.uri }}"
 
-      # High response time
+      # Warning: High Response Time
       - alert: HighResponseTime
-        expr: histogram_quantile(0.95, rate(http_server_requests_seconds_bucket[5m])) > 1
+        expr: histogram_quantile(0.95, rate(http_server_requests_seconds_bucket{job="money-transfer-staging"}[5m])) > 1
         for: 5m
         labels:
           severity: warning
           service: money-transfer
+          team: backend
         annotations:
-          summary: "High response time detected"
+          summary: "High response time (p95 > 1s)"
           description: "95th percentile response time is {{ $value }}s for {{ $labels.uri }}"
 
-      # High memory usage
-      - alert: HighMemoryUsage
-        expr: (jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"}) * 100 > 90
+      # Warning: High JVM Memory
+      - alert: HighJVMMemory
+        expr: (jvm_memory_used_bytes{area="heap",job="money-transfer-staging"} / jvm_memory_max_bytes{area="heap"}) * 100 > 90
         for: 5m
         labels:
           severity: warning
           service: money-transfer
+          team: backend
         annotations:
-          summary: "High JVM memory usage"
-          description: "JVM heap memory usage is {{ $value | humanize }}%"
+          summary: "High JVM heap memory usage"
+          description: "JVM heap memory usage is {{ $value | humanize }}% on {{ $labels.instance }}"
 
-      # High CPU usage
+      # Warning: High CPU
       - alert: HighCPU
         expr: rate(process_cpu_seconds_total{job="money-transfer-staging"}[5m]) * 100 > 80
         for: 5m
         labels:
           severity: warning
           service: money-transfer
+          team: backend
         annotations:
           summary: "High CPU usage"
-          description: "CPU usage is {{ $value | humanize }}%"
+          description: "CPU usage is {{ $value | humanize }}% on {{ $labels.instance }}"
 
-      # Request rate drop
-      - alert: RequestRateDrop
-        expr: rate(http_server_requests_seconds_count[5m]) < 0.01
+      # Info: Low Traffic
+      - alert: LowTraffic
+        expr: rate(http_server_requests_seconds_count{job="money-transfer-staging"}[5m]) < 0.01
         for: 10m
         labels:
-          severity: warning
+          severity: info
           service: money-transfer
+          team: backend
         annotations:
-          summary: "Request rate unusually low"
-          description: "Request rate is {{ $value | humanize }} req/s, which is unusually low"
+          summary: "Unusually low traffic"
+          description: "Request rate is only {{ $value | humanize }} req/s"
 
-      # No metrics received
-      - alert: NoMetrics
-        expr: absent(up{job="money-transfer-staging"})
-        for: 5m
+      # Critical: No Metrics
+      - alert: NoMetricsReceived
+        expr: absent_over_time(up{job="money-transfer-staging"}[5m])
         labels:
           severity: critical
           service: money-transfer
+          team: infrastructure
         annotations:
           summary: "No metrics received from application"
-          description: "Prometheus hasn't received metrics from the Money Transfer application for 5 minutes"
+          description: "Prometheus hasn't received any metrics from the Money Transfer application for 5 minutes"
+
+  - name: system_alerts
+    interval: 30s
+    rules:
+      # Warning: High Disk Usage
+      - alert: HighDiskUsage
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.*"} / node_filesystem_size_bytes) * 100 < 10
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+          team: infrastructure
+        annotations:
+          summary: "Low disk space"
+          description: "Only {{ $value | humanize }}% disk space available on {{ $labels.device }}"
+
+      # Warning: High System Load
+      - alert: HighSystemLoad
+        expr: node_load5 / count(node_cpu_seconds_total{mode="idle"}) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+          team: infrastructure
+        annotations:
+          summary: "High system load"
+          description: "5-minute load average is {{ $value }}"
+
+      # Warning: High Memory Usage
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+          team: infrastructure
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanize }}%"

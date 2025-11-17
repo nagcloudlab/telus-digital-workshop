@@ -1,9 +1,27 @@
 #!/bin/bash
+echo "=========================================="
 echo "📊 Monitoring Stack Status"
 echo "=========================================="
-docker-compose ps
 echo ""
-echo "Container Health:"
-docker ps --filter "name=prometheus" --format "{{.Names}}: {{.Status}}"
-docker ps --filter "name=grafana" --format "{{.Names}}: {{.Status}}"
-docker ps --filter "name=alertmanager" --format "{{.Names}}: {{.Status}}"
+
+# Container status
+echo "🐳 Containers:"
+docker compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+
+echo ""
+echo "💾 Disk Usage:"
+docker system df
+
+echo ""
+echo "🔍 Health Checks:"
+echo -n "  Prometheus:   "
+curl -sf http://localhost:9090/-/healthy && echo "✅ Healthy" || echo "❌ Unhealthy"
+
+echo -n "  Grafana:      "
+curl -sf http://localhost:3000/api/health && echo "✅ Healthy" || echo "❌ Unhealthy"
+
+echo -n "  AlertManager: "
+curl -sf http://localhost:9093/-/healthy && echo "✅ Healthy" || echo "❌ Unhealthy"
+
+echo ""
+echo "=========================================="

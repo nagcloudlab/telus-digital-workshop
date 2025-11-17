@@ -30,4 +30,30 @@ public class MetricsConfig {
                 .tag("type", "transfer")
                 .register(registry);
     }
+
+    @Bean
+    public Counter transferSuccessCounter(MeterRegistry registry) {
+        return Counter.builder("money.transfer.success")
+                .description("Successful money transfers")
+                .tag("type", "transfer")
+                .tag("status", "success")
+                .register(registry);
+    }
+
+    @Bean
+    public Counter transferFailureCounter(MeterRegistry registry) {
+        return Counter.builder("money.transfer.failure")
+                .description("Failed money transfers")
+                .tag("type", "transfer")
+                .tag("status", "failure")
+                .register(registry);
+    }
+
+    @Bean
+    public Counter accountCreationCounter(MeterRegistry registry) {
+        return Counter.builder("money.account.created")
+                .description("Total accounts created")
+                .tag("type", "account")
+                .register(registry);
+    }
 }

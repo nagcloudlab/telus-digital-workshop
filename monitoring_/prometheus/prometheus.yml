@@ -2,7 +2,7 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    cluster: 'aws-staging'
+    cluster: 'local-monitoring'
     environment: 'staging'
 
 alerting:
@@ -18,37 +18,33 @@ scrape_configs:
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
-        labels:
-          service: 'prometheus'
 
-  # Money Transfer Application (Same EC2 instance)
+  # Money Transfer App on AWS EC2
   - job_name: 'money-transfer-staging'
     metrics_path: '/actuator/prometheus'
-    scrape_interval: 10s
     static_configs:
-      - targets: ['localhost:8080']
+      - targets: ['65.1.88.10:8080']
         labels:
           service: 'money-transfer'
           environment: 'staging'
+          region: 'ap-south-1'
 
-  # Node Exporter (System Metrics)
-  - job_name: 'node-exporter'
+  # System metrics from local node-exporter
+  - job_name: 'node-exporter-local'
     static_configs:
       - targets: ['node-exporter:9100']
         labels:
-          instance: 'ec2-staging'
-          service: 'node-exporter'
+          instance: 'local-machine'
 
-  # Grafana
-  - job_name: 'grafana'
+  # EC2 Health check
+  - job_name: 'money-transfer-health'
+    metrics_path: '/actuator/health'
     static_configs:
-      - targets: ['grafana:3000']
-        labels:
-          service: 'grafana'
+      - targets: ['65.1.88.10:8080']
 
-  # AlertManager
-  - job_name: 'alertmanager'
+  # AWS CloudWatch Metrics
+  - job_name: 'aws-cloudwatch'
     static_configs:
-      - targets: ['alertmanager:9093']
+      - targets: ['cloudwatch-exporter:9106']
         labels:
-          service: 'alertmanager'
+          service: 'aws-infrastructure'    

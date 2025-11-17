@@ -1,102 +1,54 @@
-# Monitoring Stack
+# Money Transfer Monitoring Stack
 
-Local monitoring for Money Transfer application using Docker Compose.
+Complete observability stack for the Money Transfer application.
 
 ## Quick Start
 ```bash
-# Start monitoring stack
+# Start monitoring
 ./start.sh
 
-# Stop monitoring stack
+# Stop monitoring
 ./stop.sh
 
 # View logs
-./logs.sh [service]  # service: prometheus, grafana, alertmanager
+./logs.sh [service]
 
 # Check status
 ./status.sh
+
+# Restart services
+./restart.sh
 ```
 
 ## Access
 
-- **Grafana**: http://localhost:3000 (admin/admin123)
+- **Grafana**: http://localhost:3000
+  - Username: `admin`
+  - Password: `admin123`
+  
 - **Prometheus**: http://localhost:9090
 - **AlertManager**: http://localhost:9093
 
-## Architecture
-```
-Local Docker Compose
-├── Prometheus (metrics database)
-├── Grafana (dashboards)
-├── AlertManager (alerting)
-└── Node Exporter (system metrics)
-     ↓
-     Scrapes metrics from
-     ↓
-AWS EC2 (Money Transfer App)
-```
+## Services
+
+- **Prometheus** - Metrics collection and storage
+- **Grafana** - Visualization and dashboards
+- **AlertManager** - Alert routing and notification
+- **Node Exporter** - System metrics
 
 ## Key Metrics
 
-- `up` - Service availability
-- `http_server_requests_seconds_count` - Request rate
+### Application
+- `http_server_requests_seconds_count` - Request count
 - `http_server_requests_seconds_bucket` - Response times
 - `jvm_memory_used_bytes` - Memory usage
-- `process_cpu_seconds_total` - CPU usage
+- `money_transfer_count_total` - Transfer count
 
-## Alerts
+### System
+- `node_cpu_seconds_total` - CPU usage
+- `node_memory_MemAvailable_bytes` - Available memory
+- `node_filesystem_avail_bytes` - Disk space
 
-- ApplicationDown - App unreachable for 1 min
-- HighErrorRate - >5% errors for 2 min
-- HighResponseTime - p95 >1s for 5 min
-- HighMemoryUsage - >90% heap for 5 min
-- HighCPU - >80% CPU for 5 min
+## Deployment to EC2
 
-## Dashboards
-
-1. **Money Transfer - Overview**
-   - Custom dashboard with key metrics
-   
-2. **JVM Micrometer** (ID: 4701)
-   - Detailed JVM metrics
-   
-3. **Spring Boot** (ID: 12900)
-   - Spring Boot specific metrics
-
-## Troubleshooting
-```bash
-# Check container logs
-docker-compose logs [service]
-
-# Restart specific service
-docker-compose restart [service]
-
-# Rebuild after config change
-docker-compose down
-docker-compose up -d
-
-# Update target IP
-./update-targets.sh NEW_IP
-```
-
-## Configuration Files
-
-- `docker-compose.yml` - Service definitions
-- `prometheus/prometheus.yml` - Prometheus config
-- `prometheus/alert_rules.yml` - Alert rules
-- `grafana/provisioning/` - Grafana auto-config
-- `alertmanager/alertmanager.yml` - Alert routing
-
-## Update Target IP
-
-If EC2 IP changes:
-```bash
-./update-targets.sh NEW_IP
-```
-
-## Backup Dashboards
-
-Export from Grafana:
-1. Dashboard → Settings → JSON Model
-2. Copy JSON
-3. Save to `grafana/dashboards/`
+See `../deploy-monitoring.sh` for deployment instructions.

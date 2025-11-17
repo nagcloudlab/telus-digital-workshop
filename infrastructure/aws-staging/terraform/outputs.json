@@ -1,0 +1,115 @@
+{
+  "all_urls": {
+    "sensitive": false,
+    "type": [
+      "object",
+      {
+        "application": [
+          "object",
+          {
+            "health": "string",
+            "main": "string",
+            "nginx": "string"
+          }
+        ],
+        "monitoring": [
+          "object",
+          {
+            "alertmanager": "string",
+            "grafana": "string",
+            "node_exporter": "string",
+            "prometheus": "string"
+          }
+        ]
+      }
+    ],
+    "value": {
+      "application": {
+        "health": "http://3.7.139.176:8080/actuator/health",
+        "main": "http://3.7.139.176:8080",
+        "nginx": "http://3.7.139.176"
+      },
+      "monitoring": {
+        "alertmanager": "http://3.7.139.176:9093",
+        "grafana": "http://3.7.139.176:3000 (admin/admin123)",
+        "node_exporter": "http://3.7.139.176:9100/metrics",
+        "prometheus": "http://3.7.139.176:9090"
+      }
+    }
+  },
+  "application_url": {
+    "sensitive": false,
+    "type": "string",
+    "value": "http://3.7.139.176:8080"
+  },
+  "health_check_url": {
+    "sensitive": false,
+    "type": "string",
+    "value": "http://3.7.139.176:8080/actuator/health"
+  },
+  "instance_id": {
+    "sensitive": false,
+    "type": "string",
+    "value": "i-0569af650fe7c21a4"
+  },
+  "instance_private_ip": {
+    "sensitive": false,
+    "type": "string",
+    "value": "10.0.1.50"
+  },
+  "instance_public_ip": {
+    "sensitive": false,
+    "type": "string",
+    "value": "3.7.139.176"
+  },
+  "monitoring_urls": {
+    "sensitive": false,
+    "type": [
+      "object",
+      {
+        "alertmanager": "string",
+        "grafana": "string",
+        "node_exporter": "string",
+        "prometheus": "string"
+      }
+    ],
+    "value": {
+      "alertmanager": "http://3.7.139.176:9093",
+      "grafana": "http://3.7.139.176:3000",
+      "node_exporter": "http://3.7.139.176:9100/metrics",
+      "prometheus": "http://3.7.139.176:9090"
+    }
+  },
+  "nginx_url": {
+    "sensitive": false,
+    "type": "string",
+    "value": "http://3.7.139.176"
+  },
+  "ssh_command": {
+    "sensitive": false,
+    "type": "string",
+    "value": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176"
+  },
+  "useful_commands": {
+    "sensitive": false,
+    "type": [
+      "object",
+      {
+        "check_monitoring": "string",
+        "instance_info": "string",
+        "monitoring_logs": "string",
+        "ssh": "string",
+        "view_app_logs": "string",
+        "view_setup_log": "string"
+      }
+    ],
+    "value": {
+      "check_monitoring": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176 'cd ~/monitoring \u0026\u0026 docker-compose ps'",
+      "instance_info": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176 'cat /opt/money-transfer/instance-info.txt'",
+      "monitoring_logs": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176 'cd ~/monitoring \u0026\u0026 docker-compose logs -f'",
+      "ssh": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176",
+      "view_app_logs": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176 'docker logs money-transfer-staging -f'",
+      "view_setup_log": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176 'tail -100 /var/log/user-data.log'"
+    }
+  }
+}

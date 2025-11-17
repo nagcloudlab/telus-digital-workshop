@@ -7,52 +7,33 @@ route:
   group_interval: 10s
   repeat_interval: 12h
   receiver: 'default'
-  
   routes:
-    # Critical alerts
     - match:
         severity: critical
       receiver: critical
-      continue: false
-      group_wait: 5s
-      
-    # Warning alerts
     - match:
         severity: warning
       receiver: warning
-      continue: false
-      
-    # Info alerts
-    - match:
-        severity: info
-      receiver: info
-      continue: false
 
 receivers:
   - name: 'default'
     webhook_configs:
-      - url: 'http://localhost:5001/alerts'
+      - url: 'http://localhost:5001/'
         send_resolved: true
 
   - name: 'critical'
     webhook_configs:
-      - url: 'http://localhost:5001/alerts/critical'
+      - url: 'http://localhost:5001/critical'
         send_resolved: true
 
   - name: 'warning'
     webhook_configs:
-      - url: 'http://localhost:5001/alerts/warning'
-        send_resolved: true
-
-  - name: 'info'
-    webhook_configs:
-      - url: 'http://localhost:5001/alerts/info'
+      - url: 'http://localhost:5001/warning'
         send_resolved: true
 
 inhibit_rules:
-  # Inhibit warning if critical is firing
   - source_match:
       severity: 'critical'
     target_match:
       severity: 'warning'
-    equal: ['alertname', 'cluster', 'service', 'instance']
+    equal: ['alertname', 'cluster', 'service']

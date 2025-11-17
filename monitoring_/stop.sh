@@ -1,4 +1,4 @@
 #!/bin/bash
 echo "🛑 Stopping Monitoring Stack..."
-docker compose down
+docker-compose down
 echo "✅ Stack stopped!"

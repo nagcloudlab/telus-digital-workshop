@@ -5,25 +5,33 @@
     <!-- Console Appender with JSON format -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <!-- Include MDC (Mapped Diagnostic Context) fields for tracing -->
             <includeMdcKeyName>traceId</includeMdcKeyName>
             <includeMdcKeyName>spanId</includeMdcKeyName>
+            
+            <!-- Add custom fields to every log entry -->
             <customFields>{"application":"money-transfer","environment":"staging"}</customFields>
         </encoder>
     </appender>
 
-    <!-- Root Logger -->
+    <!-- Root Logger - Console Only (for Docker/Loki) -->
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
     </root>
 
-    <!-- Application Logger -->
+    <!-- Application-specific loggers -->
+    <logger name="com.training.moneytransfer" level="DEBUG"/>
     <logger name="com.workshop.moneytransfer" level="DEBUG"/>
     
     <!-- Spring Framework -->
     <logger name="org.springframework.web" level="INFO"/>
     <logger name="org.springframework.boot" level="INFO"/>
+    <logger name="org.springframework.security" level="INFO"/>
     
-    <!-- Hibernate -->
+    <!-- Hibernate/JPA -->
     <logger name="org.hibernate.SQL" level="DEBUG"/>
+    <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="TRACE"/>
     
+    <!-- Reduce noise from health checks -->
+    <logger name="org.springframework.boot.actuate.endpoint.web" level="WARN"/>
 </configuration>
