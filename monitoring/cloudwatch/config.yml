@@ -1,0 +1,58 @@
+---
+region: ap-south-1
+metrics:
+  # EC2 Instance Metrics
+  - aws_namespace: AWS/EC2
+    aws_metric_name: CPUUtilization
+    aws_dimensions: [InstanceId]
+    aws_statistics: [Average, Maximum]
+
+  - aws_namespace: AWS/EC2
+    aws_metric_name: NetworkIn
+    aws_dimensions: [InstanceId]
+    aws_statistics: [Sum]
+
+  - aws_namespace: AWS/EC2
+    aws_metric_name: NetworkOut
+    aws_dimensions: [InstanceId]
+    aws_statistics: [Sum]
+
+  - aws_namespace: AWS/EC2
+    aws_metric_name: DiskReadBytes
+    aws_dimensions: [InstanceId]
+    aws_statistics: [Sum]
+
+  - aws_namespace: AWS/EC2
+    aws_metric_name: DiskWriteBytes
+    aws_dimensions: [InstanceId]
+    aws_statistics: [Sum]
+
+  - aws_namespace: AWS/EC2
+    aws_metric_name: StatusCheckFailed
+    aws_dimensions: [InstanceId]
+    aws_statistics: [Sum]
+
+  # EBS Volume Metrics
+  - aws_namespace: AWS/EBS
+    aws_metric_name: VolumeReadBytes
+    aws_dimensions: [VolumeId]
+    aws_statistics: [Sum]
+
+  - aws_namespace: AWS/EBS
+    aws_metric_name: VolumeWriteBytes
+    aws_dimensions: [VolumeId]
+    aws_statistics: [Sum]
+
+  # Billing (Cost) Metrics
+  - aws_namespace: AWS/Billing
+    aws_metric_name: EstimatedCharges
+    aws_dimensions: [Currency]
+    aws_statistics: [Maximum]
+
+  # Custom period for billing (check once per hour)
+  - aws_namespace: AWS/Billing
+    aws_metric_name: EstimatedCharges
+    aws_dimensions: [ServiceName, Currency]
+    aws_statistics: [Maximum]
+    period_seconds: 3600
+    range_seconds: 86400

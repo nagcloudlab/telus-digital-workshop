@@ -41,3 +41,10 @@ scrape_configs:
     metrics_path: '/actuator/health'
     static_configs:
       - targets: ['65.1.88.10:8080']
+
+  # AWS CloudWatch Metrics
+  - job_name: 'aws-cloudwatch'
+    static_configs:
+      - targets: ['cloudwatch-exporter:9106']
+        labels:
+          service: 'aws-infrastructure'    
