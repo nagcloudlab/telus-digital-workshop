@@ -3,6 +3,8 @@ package com.workshop.moneytransfer.controller;
 import com.workshop.moneytransfer.dto.TransferRequest;
 import com.workshop.moneytransfer.model.Transaction;
 import com.workshop.moneytransfer.service.TransferService;
+
+import io.micrometer.observation.annotation.Observed;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -19,6 +21,7 @@ public class TransferController {
     private final TransferService transferService;
 
     @PostMapping
+    @Observed(name = "money.transfer", contextualName = "Money Transfer")
     public ResponseEntity<Transaction> transfer(@Valid @RequestBody TransferRequest request) {
         Transaction transaction = transferService.transfer(
                 request.getFromAccountNumber(),
@@ -30,6 +33,7 @@ public class TransferController {
     }
 
     @GetMapping("/history/{accountNumber}")
+    @Observed(name = "transaction.history", contextualName = "Transaction History")
     public ResponseEntity<List<Transaction>> getTransactionHistory(
             @PathVariable String accountNumber) {
 

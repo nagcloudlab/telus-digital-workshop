@@ -11,12 +11,13 @@
         </encoder>
     </appender>
 
-    <!-- Root Logger - Console Only -->
+    <!-- Root Logger -->
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
     </root>
 
     <!-- Application Logger -->
+    <logger name="com.training.moneytransfer" level="DEBUG"/>
     <logger name="com.workshop.moneytransfer" level="DEBUG"/>
     
     <!-- Spring Framework -->
