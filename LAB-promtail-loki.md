@@ -55,8 +55,7 @@ sleep 10
 
 # Query logs from Loki
 curl -G http://$STAGING_IP:3100/loki/api/v1/query \
-  --data-urlencode 'query={job="money-transfer"}' \
-  --data-urlencode 'limit=5' | jq '.data.result[].values[][1]' -r
+  --data-urlencode 'query={job="money-transfer"}' | jq '.data.result[].values[][1]' -r
 
 # Query INFO logs
 curl -G http://$STAGING_IP:3100/loki/api/v1/query \

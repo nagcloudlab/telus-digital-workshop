@@ -7,12 +7,12 @@ curl http://localhost:8080/actuator/health
 
 
 # Test 2: Get all accounts (should show 10 accounts)
-curl http://localhost:8080/api/accounts | jq
+curl http://3.7.139.176:8080/api/accounts | jq
 
 # Expected: JSON array with 10 accounts
 
 # Test 3: Transfer money
-curl -X POST http://localhost:8080/api/transfers \
+curl -X POST http://3.7.139.176:8080/api/transfers \
   -H "Content-Type: application/json" \
   -d '{
     "fromAccountNumber": "ACC001",

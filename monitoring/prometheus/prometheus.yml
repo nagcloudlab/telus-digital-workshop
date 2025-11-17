@@ -14,19 +14,13 @@ rule_files:
   - "alert_rules.yml"
 
 scrape_configs:
-  # Prometheus itself
-  - job_name: 'prometheus'
-    static_configs:
-      - targets: ['localhost:9090']
-        labels:
-          service: 'prometheus'
 
   # Money Transfer Application (Same EC2 instance)
   - job_name: 'money-transfer-staging'
     metrics_path: '/actuator/prometheus'
-    scrape_interval: 10s
+    scrape_interval: 5s
     static_configs:
-      - targets: ['localhost:8080']
+      - targets: ['3.7.163.119:8080']
         labels:
           service: 'money-transfer'
           environment: 'staging'
@@ -38,13 +32,6 @@ scrape_configs:
         labels:
           instance: 'ec2-staging'
           service: 'node-exporter'
-
-  # Grafana
-  - job_name: 'grafana'
-    static_configs:
-      - targets: ['grafana:3000']
-        labels:
-          service: 'grafana'
 
   # AlertManager
   - job_name: 'alertmanager'

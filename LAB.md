@@ -29,6 +29,7 @@ scp -i ~/.ssh/id_rsa setup-jaeger.sh ubuntu@$STAGING_IP:/home/ubuntu/
 # SSH to EC2
 ssh -i ~/.ssh/id_rsa ubuntu@$STAGING_IP
 
+./setup-jaeger.sh
 ./setup-promtail.sh
 ./setup-loki.sh
-./setup-jaeger.sh
+

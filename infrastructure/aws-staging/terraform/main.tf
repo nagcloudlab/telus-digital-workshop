@@ -173,6 +173,30 @@ resource "aws_security_group" "money_transfer_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    description = "Jaeger UI"
+    from_port   = 16686
+    to_port     = 16686
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Loki UI"
+    from_port   = 3100
+    to_port     = 3100
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Promtail"
+    from_port   = 9080
+    to_port     = 9080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # Node Exporter Metrics
   ingress {
     description = "Node Exporter Metrics"

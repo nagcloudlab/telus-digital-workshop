@@ -25,42 +25,42 @@
     ],
     "value": {
       "application": {
-        "health": "http://3.7.139.176:8080/actuator/health",
-        "main": "http://3.7.139.176:8080",
-        "nginx": "http://3.7.139.176"
+        "health": "http://3.7.163.119:8080/actuator/health",
+        "main": "http://3.7.163.119:8080",
+        "nginx": "http://3.7.163.119"
       },
       "monitoring": {
-        "alertmanager": "http://3.7.139.176:9093",
-        "grafana": "http://3.7.139.176:3000 (admin/admin123)",
-        "node_exporter": "http://3.7.139.176:9100/metrics",
-        "prometheus": "http://3.7.139.176:9090"
+        "alertmanager": "http://3.7.163.119:9093",
+        "grafana": "http://3.7.163.119:3000 (admin/admin123)",
+        "node_exporter": "http://3.7.163.119:9100/metrics",
+        "prometheus": "http://3.7.163.119:9090"
       }
     }
   },
   "application_url": {
     "sensitive": false,
     "type": "string",
-    "value": "http://3.7.139.176:8080"
+    "value": "http://3.7.163.119:8080"
   },
   "health_check_url": {
     "sensitive": false,
     "type": "string",
-    "value": "http://3.7.139.176:8080/actuator/health"
+    "value": "http://3.7.163.119:8080/actuator/health"
   },
   "instance_id": {
     "sensitive": false,
     "type": "string",
-    "value": "i-0569af650fe7c21a4"
+    "value": "i-007c1f87a59b84670"
   },
   "instance_private_ip": {
     "sensitive": false,
     "type": "string",
-    "value": "10.0.1.50"
+    "value": "10.0.1.107"
   },
   "instance_public_ip": {
     "sensitive": false,
     "type": "string",
-    "value": "3.7.139.176"
+    "value": "3.7.163.119"
   },
   "monitoring_urls": {
     "sensitive": false,
@@ -74,21 +74,21 @@
       }
     ],
     "value": {
-      "alertmanager": "http://3.7.139.176:9093",
-      "grafana": "http://3.7.139.176:3000",
-      "node_exporter": "http://3.7.139.176:9100/metrics",
-      "prometheus": "http://3.7.139.176:9090"
+      "alertmanager": "http://3.7.163.119:9093",
+      "grafana": "http://3.7.163.119:3000",
+      "node_exporter": "http://3.7.163.119:9100/metrics",
+      "prometheus": "http://3.7.163.119:9090"
     }
   },
   "nginx_url": {
     "sensitive": false,
     "type": "string",
-    "value": "http://3.7.139.176"
+    "value": "http://3.7.163.119"
   },
   "ssh_command": {
     "sensitive": false,
     "type": "string",
-    "value": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176"
+    "value": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.163.119"
   },
   "useful_commands": {
     "sensitive": false,
@@ -104,12 +104,12 @@
       }
     ],
     "value": {
-      "check_monitoring": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176 'cd ~/monitoring \u0026\u0026 docker-compose ps'",
-      "instance_info": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176 'cat /opt/money-transfer/instance-info.txt'",
-      "monitoring_logs": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176 'cd ~/monitoring \u0026\u0026 docker-compose logs -f'",
-      "ssh": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176",
-      "view_app_logs": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176 'docker logs money-transfer-staging -f'",
-      "view_setup_log": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.139.176 'tail -100 /var/log/user-data.log'"
+      "check_monitoring": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.163.119 'cd ~/monitoring \u0026\u0026 docker-compose ps'",
+      "instance_info": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.163.119 'cat /opt/money-transfer/instance-info.txt'",
+      "monitoring_logs": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.163.119 'cd ~/monitoring \u0026\u0026 docker-compose logs -f'",
+      "ssh": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.163.119",
+      "view_app_logs": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.163.119 'docker logs money-transfer-staging -f'",
+      "view_setup_log": "ssh -i ~/.ssh/id_rsa ubuntu@3.7.163.119 'tail -100 /var/log/user-data.log'"
     }
   }
 }
